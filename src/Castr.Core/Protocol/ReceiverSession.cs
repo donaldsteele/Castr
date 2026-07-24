@@ -43,6 +43,15 @@ public sealed class ReceiverSession
     private readonly int _maxDatagramPayloadBytes;
     private readonly PacketReassembler _reassembler = new();
 
+    // Serializes the two concurrent drivers of a receive (ReceiveRunner runs RunAsync and the repair loop
+    // that calls RequestRepairsAsync via Task.WhenAll on separate tasks). All the mutable transfer state below
+    // — _bitmaps, _sinks, _chunkCache, _pendingDecrypt, _contentKey, _verifiedBytes, the ChunkBitmaps, the
+    // RepairCoordinator and PeerTable — is otherwise touched from both without any synchronization, which
+    // races (observed under the container E2E fan-out as KeyNotFoundException reading a not-yet-populated
+    // _bitmaps entry and "Collection was modified" enumerating state mid-mutation). One gate held around each
+    // packet-handle and each repair pass makes those two flows mutually exclusive.
+    private readonly SemaphoreSlim _stateGate = new(1, 1);
+
     // Replaced once the manifest is accepted with an instance bounded by that transfer's known chunk size, so an
     // attacker cannot force an allocation larger than a legitimate chunk. Until then no chunk packet is processed
     // (HandleChunkPacketAsync early-returns while Manifest is null), so the wide default bound is never exercised.
@@ -119,9 +128,17 @@ public sealed class ReceiverSession
             if (payload is null)
                 continue;
 
-            await HandlePacketAsync(payload, cancellationToken).ConfigureAwait(false);
-            if (IsComplete)
-                return;
+            await _stateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await HandlePacketAsync(payload, cancellationToken).ConfigureAwait(false);
+                if (IsComplete)
+                    return;
+            }
+            finally
+            {
+                _stateGate.Release();
+            }
         }
     }
 
@@ -138,31 +155,41 @@ public sealed class ReceiverSession
         if (Manifest is null)
             return;
 
-        // Re-drive the content-key handshake until it succeeds: a single KEY_GRANT can be lost (it rides the
-        // lossy multicast data plane), and without the content key no ciphertext can be decrypted. Each retry
-        // prompts the sender to re-wrap and re-send. Cheap, and it reuses the caller's existing repair timer.
-        if (_contentKey is null)
+        // Held for the whole pass so it never observes _bitmaps/_contentKey/RepairCoordinator mid-mutation by
+        // the concurrent RunAsync packet loop (see _stateGate).
+        await _stateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            var join = new JoinRequestMessage(Manifest.Manifest.SessionId, _receiverId, _encryptionPublicKey);
-            await SendMessageAsync(join, cancellationToken).ConfigureAwait(false);
-        }
-
-        for (int fileIndex = 0; fileIndex < Manifest.Manifest.Files.Count; fileIndex++)
-        {
-            var bitmap = _bitmaps[fileIndex];
-            if (bitmap.IsComplete)
-                continue;
-
-            var missing = bitmap.MissingIndices().ToList();
-            var senderEndpoint = new Endpoint("sender", 0); // multicast-only MVP: Target is informational, delivery is always multicast
-            var plans = _repairCoordinator.PlanRepairs(fileIndex, missing, senderEndpoint, NewNonce);
-
-            foreach (var plan in plans)
+            // Re-drive the content-key handshake until it succeeds: a single KEY_GRANT can be lost (it rides the
+            // lossy multicast data plane), and without the content key no ciphertext can be decrypted. Each retry
+            // prompts the sender to re-wrap and re-send. Cheap, and it reuses the caller's existing repair timer.
+            if (_contentKey is null)
             {
-                var request = new ChunkRequestMessage(
-                    Manifest.Manifest.SessionId, _receiverId, plan.RequestNonce, fileIndex, plan.ChunkIndices, "", 0);
-                await SendMessageAsync(request, cancellationToken).ConfigureAwait(false);
+                var join = new JoinRequestMessage(Manifest.Manifest.SessionId, _receiverId, _encryptionPublicKey);
+                await SendMessageAsync(join, cancellationToken).ConfigureAwait(false);
             }
+
+            for (int fileIndex = 0; fileIndex < Manifest.Manifest.Files.Count; fileIndex++)
+            {
+                var bitmap = _bitmaps[fileIndex];
+                if (bitmap.IsComplete)
+                    continue;
+
+                var missing = bitmap.MissingIndices().ToList();
+                var senderEndpoint = new Endpoint("sender", 0); // multicast-only MVP: Target is informational, delivery is always multicast
+                var plans = _repairCoordinator.PlanRepairs(fileIndex, missing, senderEndpoint, NewNonce);
+
+                foreach (var plan in plans)
+                {
+                    var request = new ChunkRequestMessage(
+                        Manifest.Manifest.SessionId, _receiverId, plan.RequestNonce, fileIndex, plan.ChunkIndices, "", 0);
+                    await SendMessageAsync(request, cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+        finally
+        {
+            _stateGate.Release();
         }
     }
 

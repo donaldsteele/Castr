@@ -179,27 +179,28 @@ public class EndToEndTransferTests
 
         // A passive observer of the multicast segment that never joins / trusts / holds the content key.
         var eavesdropperTransport = network.CreateMulticastTransport(new Endpoint("eve", 1));
-        var captured = new List<ChunkDataMessage>();
 
         var (sink, sinkFactory) = MemorySinkFactory();
         var receiver = new ReceiverSession(
             ReceiverId(1), TrustedStoreFor(key), network.CreateMulticastTransport(new Endpoint("receiver", 1)),
             new FakeClock(DateTimeOffset.UtcNow), new ReceiverSessionOptions("/root"), sinkFactory);
 
-        using var cts = new CancellationTokenSource(OverallTimeout);
-        var eavesdropTask = Task.Run(async () =>
-        {
-            await foreach (var packet in eavesdropperTransport.ReceiveAsync(cts.Token))
-                if (MessageCodec.Decode(packet.Payload) is ChunkDataMessage cd)
-                    lock (captured) { captured.Add(cd); }
-        }, cts.Token);
-
         await RunUntilCompleteAsync(sender, receiver);
-        await cts.CancelAsync();
-        await SwallowCancellation(eavesdropTask);
 
         Assert.True(receiver.IsComplete);
         Assert.Equal(originalBytes, sink().ToArray());
+
+        // Every datagram the sender multicast during the transfer is already buffered in the eavesdropper's
+        // inbox (an unbounded channel; no-chaos delivery is synchronous). Complete that channel and drain it in
+        // the foreground so the capture is deterministic. The previous version read on a background Task.Run and
+        // then cancelled a shared token: if the thread pool hadn't scheduled the reader before the cancel,
+        // ReadAllAsync threw on the already-cancelled token *without draining the buffer*, capturing nothing —
+        // an intermittent CI-only failure of the Assert.NotEmpty below.
+        var captured = new List<ChunkDataMessage>();
+        await eavesdropperTransport.DisposeAsync();
+        await foreach (var packet in eavesdropperTransport.ReceiveAsync())
+            if (MessageCodec.Decode(packet.Payload) is ChunkDataMessage cd)
+                captured.Add(cd);
 
         // The eavesdropper saw ciphertext, and none of it equals the corresponding plaintext chunk.
         Assert.NotEmpty(captured);
