@@ -20,15 +20,21 @@ The message set and manifest design that lets [[castr-project]] send a file once
 All messages travel over a configurable administratively-scoped multicast group (default `239.192.55.55`, TTL=1 by default, link-local-only for safety):
 
 - `ANNOUNCE` (sender → multicast, periodic) — session ID, sender pubkey ID, Merkle root, transfer name, issued-at.
-- `MANIFEST` (sender → multicast/unicast) — full signed manifest: per-file Merkle root, chunk size/count, signature.
-- `CHUNK_DATA` (sender → multicast, carousel) — file/chunk index, payload, Merkle inclusion proof.
+- `MANIFEST` (sender → multicast/unicast) — full signed manifest: per-file Merkle root (over ciphertext chunk hashes — see [[security-model]] and [[adr-0003-payload-encryption]]), chunk size/count, signature, sender's X25519 encryption public key.
+- `JOIN_REQUEST` (receiver → sender, unicast) — session ID, receiver ID, receiver's X25519 public key. Sent once a receiver has verified and trusted the sender's manifest; requests the per-transfer content key. New in [[adr-0003-payload-encryption]].
+- `KEY_GRANT` (sender → receiver, unicast) — session ID, receiver ID, the per-transfer content key wrapped (ChaCha20-Poly1305) under a key derived from X25519(sender, receiver) + HKDF-SHA256. New in [[adr-0003-payload-encryption]].
+- `CHUNK_DATA` (sender → multicast, carousel) — file/chunk index, **encrypted** payload (ChaCha20-Poly1305 ciphertext under the content key, nonce derived from file/chunk index), Merkle inclusion proof over the ciphertext hash.
 - `PEER_HAVE` (receiver → multicast on desktop / mDNS+gossip on mobile) — per-file chunk bitmap + receiver endpoint. This message doubles as free peer discovery — no separate discovery machinery is needed on the desktop tier.
-- `CHUNK_REQUEST` / `CHUNK_RESPONSE` (receiver ↔ peer or sender) — targeted repair; see [[repair-protocol]] for why desktop repair responses are themselves multicast.
+- `CHUNK_REQUEST` / `CHUNK_RESPONSE` (receiver ↔ peer or sender) — targeted repair; see [[repair-protocol]] for why desktop repair responses are themselves multicast. `CHUNK_RESPONSE` payload is ciphertext, same as `CHUNK_DATA` — any peer relaying a chunk it already holds is relaying ciphertext it can't itself read unless it separately joined and holds the content key, and the receiving end verifies via the same Merkle-proof-over-ciphertext + AEAD-tag check either way.
 - `TRANSFER_COMPLETE` (receiver → sender/multicast) — status telemetry.
 
 ## Manifest: signed Merkle root, not a flat hash list
 
-**Decision**: the signed manifest carries a Merkle root over BLAKE3 chunk hashes, not a flat list of per-chunk hashes. A flat list scales linearly with chunk count (~131 KB for a 1 GB file at 256 KB chunks) and must be redistributed reliably; a Merkle root is a fixed ~32 bytes regardless of file size. Critically, this is what makes chunks arriving from an **untrusted peer** during repair verifiable: the receiver only needs to trust the sender's Ed25519 signature over the root (see [[security-model]]); any peer can then hand over a chunk plus an O(log n) inclusion proof and the receiver verifies it independently.
+**Decision**: the signed manifest carries a Merkle root over BLAKE3 chunk hashes, not a flat list of per-chunk hashes. A flat list scales linearly with chunk count (~131 KB for a 1 GB file at 256 KB chunks) and must be redistributed reliably; a Merkle root is a fixed ~32 bytes regardless of file size. Critically, this is what makes chunks arriving from an **untrusted peer** during repair verifiable: the receiver only needs to trust the sender's Ed25519 signature over the root (see [[security-model]]); any peer can then hand over a chunk plus an O(log n) inclusion proof and the receiver verifies it independently. Since [[adr-0003-payload-encryption]], the hashes in this tree are computed over each chunk's **ciphertext**, not its plaintext — the Merkle proof and the AEAD authentication tag now verify two different things (position/identity vs. content integrity), and neither substitutes for the other.
+
+## Payload encryption and the JOIN_REQUEST/KEY_GRANT handshake
+
+See [[adr-0003-payload-encryption]] for the full design. In short: chunk payloads (`CHUNK_DATA`/`CHUNK_RESPONSE`) are ChaCha20-Poly1305-encrypted under a per-transfer content key that never travels over multicast in the clear. A receiver obtains it via a small unicast handshake (`JOIN_REQUEST` → `KEY_GRANT`) *after* it has already decided to trust the sender's signed manifest — the data plane (chunk carousel, repair) stays fully multicast; only this per-receiver key exchange is unicast. **Not yet implemented as of M1** — M1's `Castr.Core` currently sends plaintext chunk payloads; see [[roadmap]] for the retrofit plan.
 
 ## Replay protection
 
@@ -39,3 +45,4 @@ Session ID = 16 random bytes, sender-generated per transfer, plus a freshness wi
 - [[castr-project]]
 - [[repair-protocol]]
 - [[security-model]]
+- [[adr-0003-payload-encryption]]

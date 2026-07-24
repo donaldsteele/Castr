@@ -20,7 +20,7 @@ When this file exceeds ~300 lines or the wiki passes ~150 pages, shard into `wik
 
 - [[wire-protocol]] — message types, two-level chunking, Merkle-root manifest design, replay protection.
 - [[repair-protocol]] — peer-assisted chunk repair algorithm, desktop-multicast vs. mobile-unicast delivery, `IPeerTable` abstraction, failure modes.
-- [[security-model]] — TOFU trust store, Ed25519/BLAKE3 integrity, no-encryption decision, path-traversal prevention.
+- [[security-model]] — TOFU trust store, Ed25519/BLAKE3 integrity, ChaCha20-Poly1305 payload encryption, path-traversal prevention.
 - [[tech-stack]] — chosen and open library/framework decisions, platform-specific quirks (Windows/Linux/macOS/iOS).
 
 ## Synthesis
@@ -29,3 +29,4 @@ When this file exceeds ~300 lines or the wiki passes ~150 pages, shard into `wik
 - [[adr-0001-ed25519-library]] — decision: NSec.Cryptography for Ed25519 signing; solution retargeted net8.0 → net10.0 LTS as a consequence.
 - [[adr-0002-mobile-discovery]] — decision: native NsdManager (Android) / NWBrowser (iOS) for mobile peer discovery; iOS Info.plist requirements.
 - [[m1-core-summary]] — M1 complete: what was built, key design realization (proof caching over tree reconstruction), documented scope trims, testing approach, open risks.
+- [[adr-0003-payload-encryption]] — decision: encrypt chunk payloads (ChaCha20-Poly1305 + X25519 + HKDF), reversing the original M0 no-encryption call; not yet implemented, retrofit tracked as M1.5.

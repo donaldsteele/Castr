@@ -9,7 +9,7 @@ updated: 2026-07-24
 
 # Castr security model
 
-The trust, signing, integrity, and path-safety design for [[castr-project]]. Confirmed posture: **integrity and authenticity, not confidentiality** — this is a trusted-LAN tool, not a confidential-transport tool, and that framing drove every choice below.
+The trust, signing, integrity, confidentiality, and path-safety design for [[castr-project]]. Confirmed posture: **integrity, authenticity, AND confidentiality** — chunk payloads are encrypted, not just signed and hashed. (This reverses an earlier "integrity/authenticity only" decision — see [[adr-0003-payload-encryption]] for why: LAN multicast traffic is visible to any device on the segment, not just devices the receiver has decided to trust, so plaintext payloads leaked to passive eavesdroppers regardless of the sender/receiver trust relationship.)
 
 ## Trust store (TOFU)
 
@@ -21,10 +21,18 @@ The trust, signing, integrity, and path-safety design for [[castr-project]]. Con
 
 - Ed25519 signs the manifest's Merkle root (see [[wire-protocol]]) — not individual chunks, since the Merkle proof already ties each chunk back to the signed root.
 - BLAKE3 is the chunk/file hash function (see [[tech-stack]] for the library rationale); a CRC32C pre-filter may be used only as a cheap, non-security-relevant garbage filter before paying for BLAKE3 + Merkle-proof verification — CRC32C is explicitly *not* collision-resistant and unsafe as the trust boundary once chunks are relayed by untrusted peers during repair.
+- With encryption (below), the Merkle tree is built over **ciphertext** chunk hashes, not plaintext. The Merkle proof and the AEAD authentication tag now do two distinct jobs: the proof says "this is the right encrypted chunk from the signed transfer" (position/identity binding), the tag says "this ciphertext is unmodified and authentic" (its own independent tamper-detection). A relaying peer during repair still can't feed a receiver corrupted or substituted data — verification composes the same way, one layer earlier.
 
-## No payload encryption (confirmed decision)
+## Payload encryption (confirmed decision, reverses the original M0 choice)
 
-Chunk payloads travel in the clear. This was a deliberate choice given the trusted-LAN framing: anyone already trusted can see plaintext on the wire, but tampering or corruption is always caught by hash/signature verification. Revisit only if a future requirement introduces untrusted network segments between sender and receiver.
+**See [[adr-0003-payload-encryption]] for the full design and rationale — summarized here:**
+
+- Every identity (sender and receiver) holds an X25519 encryption keypair, separate from its Ed25519 signing keypair.
+- The sender generates a fresh random 256-bit "content key" per transfer and encrypts every chunk with ChaCha20-Poly1305 (AEAD) under it — nonce derived from `(file index, chunk index)`, AAD binds the ciphertext to `(session ID, file index, chunk index)` so it can't be replayed into the wrong position.
+- The content key is distributed confidentially, per receiver: once a receiver trusts a sender's signed manifest, it sends a unicast `JOIN_REQUEST` with its X25519 public key; the sender derives a shared secret via X25519 + HKDF-SHA256, wraps the content key with ChaCha20-Poly1305, and returns it via unicast `KEY_GRANT`. The chunk carousel and repair traffic itself stay fully multicast — only this small per-receiver key handshake is unicast.
+- The authorization boundary is unchanged: a sender grants the key to anyone who completes the handshake (i.e. anyone who already independently trusted the sender's signature). Encryption stops *passive* eavesdroppers who never made that trust decision, not active participants — that's a receiver-side decision today, same as before.
+- **Known scope boundary**: only chunk payloads are encrypted in this design, not the MANIFEST's file names/sizes. Encrypting manifest metadata too is a documented, straightforward follow-up if a deployment needs it — not required for the initial design.
+- **Implementation status**: design decided and validated against NSec.Cryptography (no new dependency); **not yet implemented in the M1 code**, which currently sends plaintext. See [[roadmap]] for the retrofit plan.
 
 ## Path safety (traversal prevention)
 
@@ -40,3 +48,4 @@ This directly answers the "optional location to write the file" requirement from
 - [[wire-protocol]]
 - [[repair-protocol]]
 - [[tech-stack]]
+- [[adr-0003-payload-encryption]]
