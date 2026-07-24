@@ -52,8 +52,16 @@ TestResults/
 ## Docker/Testcontainers scratch
 docker-compose.override.yml
 
-## graphify generated output (regenerate via /graphify; report + graph checked in selectively at release milestones only)
+## graphify generated output — regenerate anytime via `/graphify --update`.
+## GRAPH_REPORT.md is kept tracked (small, human-readable, diffable); everything
+## else here is large and/or a pure cache, not worth versioning on every change.
 graphify-out/*.tmp
+graphify-out/graph.html
+graphify-out/graph.json
+graphify-out/manifest.json
+graphify-out/cost.json
+graphify-out/cache/
+graphify-out/.graphify_*
 
 ## OS cruft
 .DS_Store

@@ -28,3 +28,4 @@ When this file exceeds ~300 lines or the wiki passes ~150 pages, shard into `wik
 - [[roadmap]] — milestone status and the durable cross-session task list. Read this first when resuming work.
 - [[adr-0001-ed25519-library]] — decision: NSec.Cryptography for Ed25519 signing; solution retargeted net8.0 → net10.0 LTS as a consequence.
 - [[adr-0002-mobile-discovery]] — decision: native NsdManager (Android) / NWBrowser (iOS) for mobile peer discovery; iOS Info.plist requirements.
+- [[m1-core-summary]] — M1 complete: what was built, key design realization (proof caching over tree reconstruction), documented scope trims, testing approach, open risks.

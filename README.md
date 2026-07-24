@@ -11,7 +11,7 @@ apps to reliably join true multicast groups.
 
 ## Status
 
-M0 (scaffolding) complete; M1 (core protocol) not yet started. See `wiki/synthesis/roadmap.md` for milestone status and
+M0 (scaffolding) and M1 (core protocol) complete; M2 (CLI/TUI/desktop GUI) not yet started. See `wiki/synthesis/roadmap.md` for milestone status and
 `wiki/` generally for the accumulated design decisions (ADRs, spike results). The
 full architecture — wire protocol, repair algorithm, security model, and milestone
 plan — lives in the project plan; a synthesis of it is ingested into `wiki/` as the
