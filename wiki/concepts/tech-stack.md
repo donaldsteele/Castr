@@ -13,7 +13,7 @@ Library and framework choices for [[castr-project]], and the platform-specific q
 
 ## Chosen
 
-- **Hashing**: BLAKE3 (managed, SIMD-accelerated, no native dependency) as the Merkle-tree leaf hash — see [[wire-protocol]]. Chosen over SHA-256 (slower) and CRC32C-only (not collision-resistant, unsafe once peers relay chunks during repair per [[security-model]]).
+- **Hashing**: BLAKE3 via the `Blake3` NuGet package (xoofx, v3.0.2) as the Merkle-tree leaf hash — see [[wire-protocol]]. Chosen over SHA-256 (slower) and CRC32C-only (not collision-resistant, unsafe once peers relay chunks during repair per [[security-model]]). **Validated at M1 start**: the package ships as pure managed IL (`lib/net8.0/Blake3.dll`, no `runtimes/` native assets, no companion native package) — confirmed by inspecting the NuGet package contents directly, not just trusting the package description. A spike verified one-shot and incremental hashing agree, hashing is deterministic and tamper-sensitive, and a `TrimMode=full` trimmed publish produces zero trimmer warnings and the identical hash output post-trim.
 - **Transport**: raw `System.Net.Sockets.Socket`, not `UdpClient` — needed for explicit `AddMembership`/interface-index control, `MulticastLoopback` (required for same-host loopback integration tests), and `ReuseAddress`.
 - **Mobile discovery**: platform-native only — Android `NsdManager`, iOS/macOS `NWBrowser`/Bonjour — behind an `IServiceDiscovery` abstraction. Pure-managed mDNS libraries are themselves multicast-socket-based and hit the exact same iOS restriction that motivated the unicast-swarm mobile tier in the first place (see [[castr-project]]), so only OS-mediated native APIs actually work here.
 - **CLI**: System.CommandLine 2.0 (reached GA).

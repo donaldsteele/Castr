@@ -6,4 +6,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Blake3" Version="3.0.2" />
+    <PackageReference Include="NSec.Cryptography" Version="26.4.0" />
+  </ItemGroup>
+
 </Project>
