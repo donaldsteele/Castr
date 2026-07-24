@@ -118,6 +118,78 @@ public class TrustPromptAndProgressTests
         Assert.Null(trustStore.Find(transfer.Signed.SenderId));
     }
 
+    [Fact]
+    public async Task BlockedSender_EvenWithAcceptingPrompt_IsDenied_AndPromptNeverConsulted()
+    {
+        // M1.5 QA finding, now a permanent regression test: an explicitly BLOCKED sender must be denied even
+        // under an interactive Prompt policy, and the prompt must never even be consulted — "blocked" is a
+        // hard short-circuit that a human (or a buggy always-yes prompt) cannot override.
+        var originalBytes = RandomBytes(seed: 31, length: 6000);
+        using var key = ManifestSigner.CreateSigningKey();
+        var transfer = BuildTransfer(key, "blocked.bin", originalBytes, chunkSize: 1024);
+
+        var network = new InMemoryNetwork();
+        var sender = NewSender(transfer, network.CreateMulticastTransport(new Endpoint("sender", 1)));
+
+        var trustStore = new InMemoryTrustStore();
+        trustStore.Upsert(new TrustEntry(transfer.Signed.SenderId, "known-bad", TrustStatus.Blocked, DateTimeOffset.UnixEpoch, TrustEntrySource.Manual));
+        var prompt = new StubTrustPrompt(answer: true); // would say YES if ever asked
+
+        var (_, sinkFactory) = MemorySinkFactory();
+        var receiver = new ReceiverSession(
+            ReceiverId(1), trustStore, network.CreateMulticastTransport(new Endpoint("r", 1)),
+            new FakeClock(DateTimeOffset.UtcNow),
+            new ReceiverSessionOptions("/root", UnknownSenderPolicy.Prompt, IsInteractive: true),
+            sinkFactory, trustPrompt: prompt);
+
+        TrustDecision? denial = null;
+        receiver.SenderTrustDenied += (decision, _) => denial = decision;
+
+        await RunUntilDeniedAsync(sender, receiver);
+
+        Assert.Equal(0, prompt.CallCount); // blocked short-circuits BEFORE any prompt
+        Assert.False(receiver.IsComplete);
+        Assert.Null(receiver.Manifest);
+        Assert.NotNull(denial);
+        Assert.Equal(TrustOutcome.Blocked, denial!.Outcome);
+        Assert.Equal(TrustStatus.Blocked, trustStore.Find(transfer.Signed.SenderId)!.Status); // unchanged
+    }
+
+    [Fact]
+    public async Task PromptThatThrows_PropagatesException_PersistsNothing_DoesNotComplete()
+    {
+        // M2 Core contract (m2-ui-summary), now a permanent regression test: if ITrustPrompt throws,
+        // ReceiverSession.RunAsync PROPAGATES rather than silently proceeding — every UI ITrustPrompt is
+        // required to catch internally and resolve to false. This locks the contract so a future change can't
+        // quietly turn a throwing/cancelled prompt into an accidental "trust."
+        var originalBytes = RandomBytes(seed: 32, length: 4000);
+        using var key = ManifestSigner.CreateSigningKey();
+        var transfer = BuildTransfer(key, "boom.bin", originalBytes, chunkSize: 1024);
+
+        var network = new InMemoryNetwork();
+        var sender = NewSender(transfer, network.CreateMulticastTransport(new Endpoint("sender", 1)));
+
+        var trustStore = new InMemoryTrustStore(); // unknown sender -> PromptRequired
+        var (_, sinkFactory) = MemorySinkFactory();
+        var receiver = new ReceiverSession(
+            ReceiverId(1), trustStore, network.CreateMulticastTransport(new Endpoint("r", 1)),
+            new FakeClock(DateTimeOffset.UtcNow),
+            new ReceiverSessionOptions("/root", UnknownSenderPolicy.Prompt, IsInteractive: true),
+            sinkFactory, trustPrompt: new ThrowingTrustPrompt());
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var senderTask = sender.RunAsync(cts.Token);
+
+        await Assert.ThrowsAsync<PromptBoomException>(() => receiver.RunAsync(cts.Token));
+
+        await cts.CancelAsync();
+        await SwallowCancellation(senderTask);
+
+        Assert.False(receiver.IsComplete);
+        Assert.Null(receiver.Manifest);
+        Assert.Null(trustStore.Find(transfer.Signed.SenderId)); // nothing persisted on a throwing prompt
+    }
+
     // ---- Progress observability ----
 
     [Fact]
@@ -218,6 +290,14 @@ public class TrustPromptAndProgressTests
             return Task.FromResult(answer);
         }
     }
+
+    private sealed class ThrowingTrustPrompt : ITrustPrompt
+    {
+        public Task<bool> RequestTrustAsync(TrustPromptContext context, CancellationToken cancellationToken) =>
+            Task.FromException<bool>(new PromptBoomException());
+    }
+
+    private sealed class PromptBoomException : Exception;
 
     private sealed record Transfer(
         SignedManifest Signed,

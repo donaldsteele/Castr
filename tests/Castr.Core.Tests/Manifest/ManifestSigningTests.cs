@@ -56,6 +56,35 @@ public class ManifestSigningTests
     }
 
     [Fact]
+    public void Verify_SwappedSenderEncryptionKey_Fails()
+    {
+        // MITM defense (ADR-0003): the sender's X25519 encryption public key is carried INSIDE the signed
+        // manifest, so an active attacker cannot substitute their own encryption key to hijack the
+        // JOIN_REQUEST/KEY_GRANT handshake without invalidating the Ed25519 signature.
+        using var key = ManifestSigner.CreateSigningKey();
+        var signed = ManifestSigner.Sign(SampleManifest(), key);
+
+        var attackerEncryptionKey = Enumerable.Repeat((byte)0x42, TransferManifest.EncryptionPublicKeySize).ToArray();
+        var tampered = signed with { Manifest = signed.Manifest with { SenderEncryptionPublicKey = attackerEncryptionKey } };
+
+        Assert.False(ManifestVerifier.VerifySignature(tampered));
+    }
+
+    [Fact]
+    public void Verify_AlteredIssuedAt_Fails()
+    {
+        // The manifest's issued-at timestamp is covered by the signature. An attacker replaying an old
+        // legitimate manifest therefore cannot forge a fresh timestamp on it to defeat a freshness check
+        // (see the replay-protection note in wire-protocol.md) without breaking the signature.
+        using var key = ManifestSigner.CreateSigningKey();
+        var signed = ManifestSigner.Sign(SampleManifest(), key);
+
+        var tampered = signed with { Manifest = signed.Manifest with { IssuedAt = signed.Manifest.IssuedAt.AddYears(5) } };
+
+        Assert.False(ManifestVerifier.VerifySignature(tampered));
+    }
+
+    [Fact]
     public void Verify_GarbagePublicKeyBytes_FailsWithoutThrowing()
     {
         using var key = ManifestSigner.CreateSigningKey();

@@ -26,13 +26,12 @@ internal static class SendRunner
 {
     public static async Task<int> RunAsync(SendOptions options, IAnsiConsole console, CancellationToken cancellationToken)
     {
-        if (options.ChunkSize > CastrPaths.MaxChunkSize)
+        if (options.ChunkSize < 1 || options.ChunkSize > CastrPaths.MaxChunkSize)
         {
-            int cipherSize = options.ChunkSize + CastrPaths.ChaCha20Poly1305TagBytes;
             console.MarkupLineInterpolated(
-                $"[red]Chunk size {options.ChunkSize} bytes would produce a {options.ChunkSize}+{CastrPaths.ChaCha20Poly1305TagBytes}={cipherSize}-byte encrypted payload, exceeding the safe UDP datagram limit of ~{CastrPaths.MaxSafeUdpPayloadBytes} bytes.[/]");
+                $"[red]Chunk size {options.ChunkSize} bytes is out of range: it must be between 1 and {CastrPaths.MaxChunkSize} bytes.[/]");
             console.MarkupLineInterpolated(
-                $"[red]Use --chunk-size <= {CastrPaths.MaxChunkSize} until Castr.Core's transport packetizes large chunks (tracked for M3).[/]");
+                $"[red]The ceiling is a memory-safety bound on chunk reassembly, not a UDP-datagram limit — Castr.Core packetizes large chunks into MTU-safe wire packets.[/]");
             return ExitCodes.InvalidInput;
         }
 

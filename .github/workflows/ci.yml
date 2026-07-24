@@ -27,12 +27,52 @@ jobs:
       - name: Build
         run: dotnet build --no-restore --configuration Release
 
+      # Explicitly exclude the Docker-gated E2E tier from the cross-OS matrix. The [E2EFact] tests already
+      # self-skip unless CASTR_E2E is set and a Docker daemon is reachable, but filtering here documents
+      # intent and guarantees the main matrix never attempts container-based E2E (which needs Linux-native
+      # Docker bridge networking + tc/iproute2, unavailable/unreliable on hosted macOS & Windows runners).
       - name: Test (unit + loopback multicast integration)
-        run: dotnet test --no-build --configuration Release --logger "trx" --results-directory TestResults
+        run: dotnet test --no-build --configuration Release --filter "Category!=E2E" --logger "trx" --results-directory TestResults
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.os }}
+          path: TestResults
+
+  # Docker-gated Testcontainers E2E fan-out tier (tests/Castr.Core.E2ETests). Runs on ubuntu-latest ONLY:
+  # the suite drives the shipped castr binary across real Docker containers on a multicast-capable bridge
+  # and injects real kernel packet loss via `tc qdisc ... netem`, all of which needs Linux-native Docker
+  # (GitHub-hosted macOS/Windows runners have no reliable Docker bridge networking). This is a SEPARATE job,
+  # not a dependency of build-and-test, so a slow/flaky container run never blocks or gates the fast matrix.
+  # It runs on the same events as the matrix (pushes to main and PRs targeting main) so container fan-out is
+  # validated before merge; ubuntu-latest ships Docker preinstalled, and Testcontainers grants NET_ADMIN to
+  # the containers for tc netem.
+  e2e-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Test (Docker container fan-out E2E)
+        env:
+          CASTR_E2E: "1"
+        run: dotnet test --no-build --configuration Release --filter "Category=E2E" tests/Castr.Core.E2ETests --logger "trx" --results-directory TestResults
+
+      - name: Upload E2E test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-e2e-docker
           path: TestResults

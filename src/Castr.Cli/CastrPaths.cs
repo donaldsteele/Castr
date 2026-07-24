@@ -15,42 +15,22 @@ internal static class CastrPaths
     public const int DefaultPort = 45055;
 
     /// <summary>
-    /// Default chunk size (bytes). Kept small because the M1 UDP transport puts a whole (encrypted) chunk in a
-    /// single datagram — the two-level chunking into ~1200-byte wire packets described in
-    /// wiki/concepts/wire-protocol.md is a documented not-yet-implemented trim, so a chunk must fit in one UDP
-    /// datagram (max 65507 bytes). 8 KB matches the GUI's established default and leaves ample headroom.
+    /// Default chunk size (bytes). 8 KB matches the GUI's established default. As of M3, Castr.Core packetizes
+    /// each encrypted chunk into MTU-safe wire packets (see Castr.Core.Protocol.WirePacketizer), so this is no
+    /// longer constrained by the single-datagram UDP limit; it stays at 8 KB for continuity with M2.
     /// </summary>
     public const int DefaultChunkSize = 8192;
 
     /// <summary>
-    /// Fixed ChaCha20-Poly1305 overhead <see cref="Castr.Core.Security.ContentKey"/> adds per chunk: a
-    /// 16-byte Poly1305 auth tag and nothing else (the nonce is derived deterministically from
-    /// (fileIndex, chunkIndex) rather than carried alongside the ciphertext), so ciphertext size is always
-    /// exactly plaintext size + 16.
+    /// Upper bound on <c>--chunk-size</c>. Since M3, Castr.Core splits every encrypted chunk into MTU-safe wire
+    /// packets before it hits the socket (see Castr.Core.Protocol.WirePacketizer), so a large chunk no longer
+    /// risks the old 65,507-byte single-datagram SocketException/silent-stall failure that forced a ~65 KB cap.
+    /// The documented hash/repair chunk range is 256 KB–1 MB; this ceiling sits well above it. It exists purely
+    /// as a sanity guard against pathological memory use: a receiver buffers a whole chunk's fragments in RAM
+    /// while reassembling it, so an unbounded chunk size would be a memory-exhaustion foot-gun. 16 MiB covers
+    /// the documented range with generous headroom.
     /// </summary>
-    public const int ChaCha20Poly1305TagBytes = 16;
-
-    /// <summary>
-    /// Conservative ceiling on the encrypted chunk payload the CLI will allow onto the wire. The M1 UDP
-    /// transport still puts one whole encrypted chunk into a single datagram (the two-level chunk/wire-packet
-    /// split in wiki/concepts/wire-protocol.md isn't implemented yet, tracked for M3), and on Windows
-    /// Socket.SendToAsync throws SocketException (MessageSize) synchronously above 65,507 bytes — the
-    /// theoretical max IPv4 UDP payload. Worse, a receiver already listening has no timeout, so an oversized
-    /// send silently hangs it forever instead of failing.
-    ///
-    /// We stop short of that exact 65,507-byte ceiling and use 65,000: the ciphertext this bounds doesn't
-    /// travel alone — it rides inside a ChunkDataMessage wire envelope (session id, file/chunk indices, a
-    /// length prefix, and a Merkle inclusion proof whose size grows with chunk count) that this simple,
-    /// Core-format-agnostic check does not itself measure, and some paths trim usable space further with IPv4
-    /// options. The ~500-byte margin absorbs that envelope for realistic transfer sizes.
-    /// </summary>
-    public const int MaxSafeUdpPayloadBytes = 65_000;
-
-    /// <summary>
-    /// Largest --chunk-size the CLI accepts: the largest plaintext chunk whose ciphertext
-    /// (chunk size + <see cref="ChaCha20Poly1305TagBytes"/>) still fits under <see cref="MaxSafeUdpPayloadBytes"/>.
-    /// </summary>
-    public const int MaxChunkSize = MaxSafeUdpPayloadBytes - ChaCha20Poly1305TagBytes;
+    public const int MaxChunkSize = 16 * 1024 * 1024;
 
     /// <summary>Per-user config directory, e.g. %APPDATA%/castr on Windows, ~/.config/castr elsewhere.</summary>
     public static string ConfigDirectory

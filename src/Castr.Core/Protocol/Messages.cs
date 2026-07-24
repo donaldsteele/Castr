@@ -14,6 +14,8 @@ public enum MessageType : byte
     TransferComplete = 7,
     JoinRequest = 8,
     KeyGrant = 9,
+    PacketFragment = 10,
+    ChunkPacket = 11,
 }
 
 /// <summary>Periodic lightweight heartbeat advertising an active transfer offer, before a receiver commits to fetching the full signed manifest.</summary>
@@ -82,6 +84,43 @@ public sealed record ChunkResponseMessage(
     int ChunkIndex,
     byte[] Payload,
     MerkleProof Proof);
+
+/// <summary>
+/// One MTU-safe slice of a larger wire message (see <see cref="WirePacketizer"/>). All fragments of one
+/// logical message share a random <see cref="GroupId"/>; <see cref="PacketIndex"/> orders them and
+/// <see cref="PacketCount"/> tells the receiver how many to expect. <see cref="TotalLength"/> is the length of
+/// the reassembled original message, used to size the reassembly buffer and validate completeness. This is a
+/// pure transport wrapper — it carries opaque encoded-message bytes and is oblivious to chunk semantics,
+/// encryption, and Merkle proofs.
+/// </summary>
+public sealed record PacketFragmentMessage(
+    long GroupId,
+    int PacketIndex,
+    int PacketCount,
+    int TotalLength,
+    byte[] Fragment);
+
+/// <summary>
+/// One MTU-safe wire packet of a single chunk's <b>ciphertext</b> — the transport-granularity half of the
+/// two-level chunking in wiki/concepts/wire-protocol.md, used when a chunk's ciphertext is too large to ride
+/// in one datagram. Unlike the generic <see cref="PacketFragmentMessage"/>, this is keyed by chunk identity
+/// (<see cref="FileIndex"/>/<see cref="ChunkIndex"/>) and carries only the deterministic ciphertext, so
+/// every retransmission of a chunk — the original carousel send and every repair re-send from the sender or a
+/// relaying peer — produces byte-identical packets. That lets a receiver <b>accumulate</b> a chunk's packets
+/// across repair rounds instead of needing all of them to survive a single round: essential for large chunks,
+/// where independent per-packet loss would otherwise make a whole-chunk round statistically impossible.
+/// The Merkle inclusion proof (over the whole ciphertext) rides only on packet 0; a chunk cannot complete
+/// without every packet, so packet 0 — and thus the proof — is always present at reassembly.
+/// </summary>
+public sealed record ChunkPacketMessage(
+    byte[] SessionId,
+    int FileIndex,
+    int ChunkIndex,
+    int PacketIndex,
+    int PacketCount,
+    int CiphertextLength,
+    byte[] Fragment,
+    MerkleProof? Proof);
 
 public enum TransferOutcome : byte
 {

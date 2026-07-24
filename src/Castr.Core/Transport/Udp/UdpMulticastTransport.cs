@@ -34,6 +34,28 @@ public sealed class UdpMulticastTransport : IMulticastTransport
         _socket.SetSocketOption(
             SocketOptionLevel.IP, SocketOptionName.AddMembership,
             new MulticastOption(groupAddress, interfaceAddress ?? IPAddress.Any));
+
+        // Set IP_MULTICAST_IF (the *send*-side egress interface). AddMembership above only governs which
+        // interface we *receive* the group on; it does not pick the interface a multicast sendto() leaves by.
+        // On Windows and Linux the kernel resolves a usable egress interface for a multicast destination via
+        // routing-table fallback even when IP_MULTICAST_IF is unset, so the historical null-interface path
+        // already works there. macOS does NOT: without IP_MULTICAST_IF set, sendto() to a multicast address
+        // fails with EHOSTUNREACH ("No route to host"). See wiki/concepts/tech-stack.md.
+        var sendInterface = interfaceAddress;
+        if (sendInterface is null && OperatingSystem.IsMacOS())
+        {
+            // Only resolve automatically when there's exactly one unambiguous candidate NIC; otherwise fall
+            // back to loopback (always present, sufficient for same-host multicastLoopback scenarios incl. the
+            // integration tests) rather than silently guessing among multiple real NICs — see
+            // MulticastInterfaces' documented no-silent-guess policy.
+            var candidates = MulticastInterfaces.GetCandidateAddresses();
+            sendInterface = candidates.Count == 1 ? candidates[0] : IPAddress.Loopback;
+        }
+        if (sendInterface is not null)
+        {
+            _socket.SetSocketOption(
+                SocketOptionLevel.IP, SocketOptionName.MulticastInterface, sendInterface.GetAddressBytes());
+        }
     }
 
     public async ValueTask SendAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken = default) =>

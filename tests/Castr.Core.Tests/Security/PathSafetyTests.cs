@@ -68,6 +68,16 @@ public class PathSafetyTests : IDisposable
     }
 
     [Fact]
+    public void ResolveDestination_NullByteInjection_IsRejectedNotCrashed()
+    {
+        // Classic path-truncation attack: an embedded NUL. The segment-level check treats it as an ordinary
+        // (non-"..") segment, so the real guard is that path resolution rejects it as an unsafe path rather
+        // than surfacing a raw framework exception or, worse, writing to a truncated destination.
+        Assert.Throws<PathTraversalException>(() => PathSafety.ResolveDestination(_root, "photo\0.jpg"));
+        Assert.Throws<PathTraversalException>(() => PathSafety.ResolveDestination(_root, "sub/evil\0/../../escape"));
+    }
+
+    [Fact]
     public void ResolveDestination_ReceiverOverride_MustBeAbsolute()
     {
         Assert.Throws<ArgumentException>(() => PathSafety.ResolveDestination(_root, "photo.jpg", "relative/override.jpg"));

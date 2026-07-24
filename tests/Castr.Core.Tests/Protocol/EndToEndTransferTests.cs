@@ -252,8 +252,15 @@ public class EndToEndTransferTests
             contentKey);
     }
 
+    // These InMemory tests inspect/tamper/filter whole ChunkDataMessages on the wire, so the sender is pinned
+    // to a large datagram budget that keeps each chunk in a single (unfragmented) datagram. Fragmentation
+    // itself is exercised by the WirePacketizer/PacketReassembler unit tests and the real-socket integration
+    // tests; receivers here still use the default ~1200-byte budget, so repair responses do get fragmented and
+    // reassembled end-to-end.
+    private const int SingleDatagramBudget = 65_000;
+
     private static SenderSession NewSender(Transfer t, IMulticastTransport transport) =>
-        new(t.Signed, t.Sources, t.Trees, transport, t.SenderEncryptionKey, t.ContentKey);
+        new(t.Signed, t.Sources, t.Trees, transport, t.SenderEncryptionKey, t.ContentKey, maxDatagramPayloadBytes: SingleDatagramBudget);
 
     private static ITrustStore TrustedStoreFor(NSec.Cryptography.Key key)
     {

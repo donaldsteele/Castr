@@ -174,6 +174,22 @@ public class MessageCodecTests
     }
 
     [Fact]
+    public void PacketFragment_RoundTrips()
+    {
+        var fragment = new byte[1174];
+        new Random(3).NextBytes(fragment);
+        var message = new PacketFragmentMessage(GroupId: -0x0123456789ABCDEF, PacketIndex: 5, PacketCount: 224, TotalLength: 262_160, Fragment: fragment);
+
+        var decoded = (PacketFragmentMessage)MessageCodec.Decode(MessageCodec.Encode(message));
+
+        Assert.Equal(message.GroupId, decoded.GroupId);
+        Assert.Equal(message.PacketIndex, decoded.PacketIndex);
+        Assert.Equal(message.PacketCount, decoded.PacketCount);
+        Assert.Equal(message.TotalLength, decoded.TotalLength);
+        Assert.Equal(message.Fragment, decoded.Fragment);
+    }
+
+    [Fact]
     public void Decode_UnsupportedVersion_Throws()
     {
         var bytes = MessageCodec.Encode(new TransferCompleteMessage(Id(16), Id(16), TransferOutcome.Completed));
