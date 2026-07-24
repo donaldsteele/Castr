@@ -190,7 +190,10 @@ public static class MessageCodec
 
     private static void WriteInt32Array(Stream stream, int[] values)
     {
-        WriteUInt16(stream, checked((ushort)values.Length));
+        // UInt32 count prefix, not UInt16: a repair batch (ChunkRequestMessage.ChunkIndices) can
+        // legitimately exceed 65,535 entries for a large file requested in bulk from the sender before
+        // any peer has announced chunks — a UInt16 cap here overflows in that realistic scenario.
+        WriteUInt32(stream, checked((uint)values.Length));
         foreach (var value in values)
             WriteInt32(stream, value);
     }
@@ -211,6 +214,13 @@ public static class MessageCodec
     {
         Span<byte> buffer = stackalloc byte[2];
         BinaryPrimitives.WriteUInt16BigEndian(buffer, value);
+        stream.Write(buffer);
+    }
+
+    private static void WriteUInt32(Stream stream, uint value)
+    {
+        Span<byte> buffer = stackalloc byte[4];
+        BinaryPrimitives.WriteUInt32BigEndian(buffer, value);
         stream.Write(buffer);
     }
 
@@ -288,7 +298,7 @@ public static class MessageCodec
 
         public int[] ReadInt32Array()
         {
-            ushort count = ReadUInt16();
+            uint count = ReadUInt32();
             var values = new int[count];
             for (int i = 0; i < count; i++)
                 values[i] = ReadInt32();

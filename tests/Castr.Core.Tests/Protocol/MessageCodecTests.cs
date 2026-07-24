@@ -110,6 +110,20 @@ public class MessageCodecTests
     }
 
     [Fact]
+    public void ChunkRequest_MoreThan65535Indices_RoundTrips()
+    {
+        // Regression test: a UInt16 count prefix caps out at 65,535 entries and overflows for any
+        // realistic large-file cold-start repair batch (no peers yet, all missing chunks requested from
+        // the sender at once). The count prefix must be UInt32, matching Payload's width, not UInt16.
+        var indices = Enumerable.Range(0, 70_000).ToArray();
+        var message = new ChunkRequestMessage(Id(16), Id(16), Id(16), 0, indices, "sender-host", 9000);
+
+        var decoded = (ChunkRequestMessage)MessageCodec.Decode(MessageCodec.Encode(message));
+
+        Assert.Equal(indices, decoded.ChunkIndices);
+    }
+
+    [Fact]
     public void ChunkResponse_RoundTrips_AndMatchesRequestNonce()
     {
         var nonce = Id(16);
