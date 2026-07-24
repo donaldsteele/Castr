@@ -1,0 +1,64 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+msbuild.log
+msbuild.err
+msbuild.wrn
+
+## Visual Studio / Rider / VS Code
+.vs/
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.DotSettings.user
+
+## Test results
+TestResults/
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+*.coveragexml
+
+## Mobile (Android/iOS) build artifacts
+*.apk
+*.aab
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+## Avalonia / MAUI misc
+*.ap_
+*.aar
+
+## Docker/Testcontainers scratch
+docker-compose.override.yml
+
+## graphify generated output (regenerate via /graphify; report + graph checked in selectively at release milestones only)
+graphify-out/*.tmp
+
+## OS cruft
+.DS_Store
+Thumbs.db
+
+## User secrets / local config
+*.local.json
+secrets.json

@@ -1,0 +1,30 @@
+# Wiki Index
+
+The catalog of all pages in this wiki. Each entry: a wikilink to the page and a one-line summary. The LLM reads this first when answering queries to identify candidate pages.
+
+Keep summaries tight — one line each. The index is engineered to be cheap to read; a fat index defeats its purpose.
+
+When this file exceeds ~300 lines or the wiki passes ~150 pages, shard into `wiki/indexes/<type>.md` and replace this file with a directory of shards. See the `scaling-playbook.md` reference in the `llm-wiki` skill for the migration procedure.
+
+---
+
+## Sources
+
+- [[castr-project-plan]] — the approved founding architecture and milestone plan for Castr.
+
+## Entities
+
+- [[castr-project]] — overview of Castr: what it is, product shape, why mobile is architecturally different.
+
+## Concepts
+
+- [[wire-protocol]] — message types, two-level chunking, Merkle-root manifest design, replay protection.
+- [[repair-protocol]] — peer-assisted chunk repair algorithm, desktop-multicast vs. mobile-unicast delivery, `IPeerTable` abstraction, failure modes.
+- [[security-model]] — TOFU trust store, Ed25519/BLAKE3 integrity, no-encryption decision, path-traversal prevention.
+- [[tech-stack]] — chosen and open library/framework decisions, platform-specific quirks (Windows/Linux/macOS/iOS).
+
+## Synthesis
+
+- [[roadmap]] — milestone status and the durable cross-session task list. Read this first when resuming work.
+- [[adr-0001-ed25519-library]] — decision: NSec.Cryptography for Ed25519 signing; solution retargeted net8.0 → net10.0 LTS as a consequence.
+- [[adr-0002-mobile-discovery]] — decision: native NsdManager (Android) / NWBrowser (iOS) for mobile peer discovery; iOS Info.plist requirements.

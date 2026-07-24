@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dsteele/Castr/main/schemas/trusted-senders.seed.schema.json",
+  "version": 1,
+  "comment": "Example pre-deployment trust seed. Merged into a receiver's local trust store on first run; the local store is authoritative for all changes made after that. Copy this file next to the receiver binary/config as 'trusted-senders.json' (or point --trust-seed at it) to pre-authorize known senders before deployment.",
+  "entries": [
+    {
+      "publicKeyId": "ed25519:BASE64_ENCODED_32_BYTE_PUBLIC_KEY_GOES_HERE",
+      "displayName": "example-build-server",
+      "status": "trusted",
+      "addedAt": "2026-01-01T00:00:00Z",
+      "source": "pre-deployed"
+    },
+    {
+      "publicKeyId": "ed25519:ANOTHER_BASE64_ENCODED_32_BYTE_PUBLIC_KEY",
+      "displayName": "known-bad-actor-example",
+      "status": "blocked",
+      "addedAt": "2026-01-01T00:00:00Z",
+      "source": "pre-deployed"
+    }
+  ]
+}
