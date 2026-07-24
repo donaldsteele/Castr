@@ -61,6 +61,11 @@ dotnet test
 
 Requires the .NET 10 SDK (LTS, pinned via `global.json`).
 
+Every push to `main` also builds self-contained, per-platform zips of `castr` (CLI) and the desktop GUI for
+win-x64, win-arm64, osx-x64, osx-arm64, and linux-x64, uploaded as downloadable artifacts on that CI run's
+Actions page (see the `package` job in `.github/workflows/ci.yml`). These are unsigned CI convenience builds,
+not versioned/checksummed releases — that's tracked for M5.
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE).

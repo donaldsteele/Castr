@@ -76,3 +76,67 @@ jobs:
         with:
           name: test-results-e2e-docker
           path: TestResults
+
+  # Produces downloadable, self-contained per-platform zips of Castr.Cli and Castr.Gui.Desktop. Only on
+  # pushes to main (not PRs) so ordinary PR CI stays fast/cheap; gated on both the cross-OS matrix and the
+  # E2E fan-out tier passing first, so nothing is packaged from a build that didn't actually work. All five
+  # RIDs are published from a single ubuntu-latest runner: self-contained `dotnet publish` resolves the
+  # target runtime (and, for Castr.Gui.Desktop, Avalonia's native Skia/HarfBuzz assets) as ordinary
+  # RID-specific NuGet packages, so cross-publishing win-x64/win-arm64/osx-x64/osx-arm64 from Linux is
+  # standard practice and needs no per-OS runner (verified for real: all 10 publish+zip combinations were
+  # run on a live GitHub Actions run via a throwaway PR before this job was merged to main). Not single-file
+  # (`PublishSingleFile`) — Avalonia hasn't been validated against single-file publishing in this project
+  # (see wiki/synthesis/roadmap.md's Native AOT open item), so each zip contains the full publish output
+  # folder (exe + dependency DLLs + native assets) rather than one bundled executable. macOS builds are
+  # unsigned/unnotarized zips, not distributable .app bundles or DMGs — real macOS release packaging is M5
+  # scope, not this CI convenience artifact.
+  package:
+    name: Package (${{ matrix.rid }})
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build-and-test, e2e-docker]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [win-x64, win-arm64, osx-x64, osx-arm64, linux-x64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Publish Castr.Cli (${{ matrix.rid }})
+        run: >
+          dotnet publish src/Castr.Cli/Castr.Cli.csproj
+          --configuration Release
+          --runtime ${{ matrix.rid }}
+          --self-contained true
+          --output publish/${{ matrix.rid }}/castr-cli
+
+      - name: Publish Castr.Gui.Desktop (${{ matrix.rid }})
+        run: >
+          dotnet publish src/Castr.Gui.Desktop/Castr.Gui.Desktop.csproj
+          --configuration Release
+          --runtime ${{ matrix.rid }}
+          --self-contained true
+          --output publish/${{ matrix.rid }}/castr-gui
+
+      - name: Zip published output
+        working-directory: publish/${{ matrix.rid }}
+        run: |
+          zip -r "../../castr-cli-${{ matrix.rid }}.zip" castr-cli
+          zip -r "../../castr-gui-${{ matrix.rid }}.zip" castr-gui
+
+      - name: Upload Castr.Cli zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: castr-cli-${{ matrix.rid }}
+          path: castr-cli-${{ matrix.rid }}.zip
+
+      - name: Upload Castr.Gui.Desktop zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: castr-gui-${{ matrix.rid }}
+          path: castr-gui-${{ matrix.rid }}.zip
