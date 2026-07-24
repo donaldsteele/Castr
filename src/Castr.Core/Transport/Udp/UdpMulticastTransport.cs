@@ -31,26 +31,37 @@ public sealed class UdpMulticastTransport : IMulticastTransport
 
         _socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastLoopback, multicastLoopback);
         _socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, (int)timeToLive);
+        // Multicast needs two interface decisions: which interface to *join* the group on (AddMembership /
+        // IP_ADD_MEMBERSHIP, receive side) and which interface a multicast sendto() leaves by
+        // (IP_MULTICAST_IF, send side). On Windows and Linux both are resolved acceptably by the kernel's
+        // routing-table fallback when left unset, so the historical null-interface path already works there
+        // and we leave it untouched. macOS does NOT do that fallback for the send side: without
+        // IP_MULTICAST_IF set, sendto() to a multicast address fails with EHOSTUNREACH ("No route to host").
+        // Worse, for same-host delivery the loopback copy (IP_MULTICAST_LOOP) is delivered only to members
+        // on the *outgoing* interface, so the join interface and the send interface MUST be the same one —
+        // otherwise the send succeeds but no local receiver ever sees the packet. See
+        // wiki/concepts/tech-stack.md.
+        var joinInterface = interfaceAddress ?? IPAddress.Any;
+        var sendInterface = interfaceAddress; // null => leave Windows/Linux kernel fallback in charge.
+
+        if (interfaceAddress is null && OperatingSystem.IsMacOS())
+        {
+            // Resolve one interface and use it for BOTH join and send so they agree. Prefer a single
+            // unambiguous candidate NIC (real single-NIC hosts, and cross-host delivery, work); otherwise
+            // fall back to loopback — always present, correct for same-host multicastLoopback scenarios incl.
+            // the integration tests, and the safe non-guess for multi-NIC hosts where the user is expected to
+            // pass an explicit --interface. This honors MulticastInterfaces' documented no-silent-guess policy
+            // (loopback is not a guess among the real NICs).
+            var candidates = MulticastInterfaces.GetCandidateAddresses();
+            var resolved = candidates.Count == 1 ? candidates[0] : IPAddress.Loopback;
+            joinInterface = resolved;
+            sendInterface = resolved;
+        }
+
         _socket.SetSocketOption(
             SocketOptionLevel.IP, SocketOptionName.AddMembership,
-            new MulticastOption(groupAddress, interfaceAddress ?? IPAddress.Any));
+            new MulticastOption(groupAddress, joinInterface));
 
-        // Set IP_MULTICAST_IF (the *send*-side egress interface). AddMembership above only governs which
-        // interface we *receive* the group on; it does not pick the interface a multicast sendto() leaves by.
-        // On Windows and Linux the kernel resolves a usable egress interface for a multicast destination via
-        // routing-table fallback even when IP_MULTICAST_IF is unset, so the historical null-interface path
-        // already works there. macOS does NOT: without IP_MULTICAST_IF set, sendto() to a multicast address
-        // fails with EHOSTUNREACH ("No route to host"). See wiki/concepts/tech-stack.md.
-        var sendInterface = interfaceAddress;
-        if (sendInterface is null && OperatingSystem.IsMacOS())
-        {
-            // Only resolve automatically when there's exactly one unambiguous candidate NIC; otherwise fall
-            // back to loopback (always present, sufficient for same-host multicastLoopback scenarios incl. the
-            // integration tests) rather than silently guessing among multiple real NICs — see
-            // MulticastInterfaces' documented no-silent-guess policy.
-            var candidates = MulticastInterfaces.GetCandidateAddresses();
-            sendInterface = candidates.Count == 1 ? candidates[0] : IPAddress.Loopback;
-        }
         if (sendInterface is not null)
         {
             _socket.SetSocketOption(
