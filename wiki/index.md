@@ -31,3 +31,4 @@ When this file exceeds ~300 lines or the wiki passes ~150 pages, shard into `wik
 - [[m1-core-summary]] — M1 complete: what was built, key design realization (proof caching over tree reconstruction), documented scope trims, testing approach, open risks.
 - [[adr-0003-payload-encryption]] — decision: encrypt chunk payloads (ChaCha20-Poly1305 + X25519 + HKDF), reversing the original M0 no-encryption call; implemented and QA-reviewed as M1.5.
 - [[m1.5-encryption-summary]] — M1.5 complete: X25519/JOIN_REQUEST/KEY_GRANT handshake, ciphertext-Merkle chunks, 186+4 tests, QA-confirmed tamper/AAD/nonce/MITM/TOFU checks, deliberate deviations.
+- [[m2-ui-summary]] — M2 complete: Core progress/trust-prompt contract, Castr.Tui dashboard, Castr.Gui.Desktop (Avalonia), Castr.Cli (send/receive/trust); 244 tests; QA PASS-WITH-CONCERNS (chunk-size/UDP transport gap, mitigated not fixed).

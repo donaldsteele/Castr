@@ -13,7 +13,9 @@ The message set and manifest design that lets [[castr-project]] send a file once
 
 ## Two-level chunking
 
-**Chunks** (256 KB–1 MB) are the hash/repair granularity. Each chunk is split into **wire packets** (~1200 bytes, MTU-safe) for actual UDP datagrams. Keeping these two concepts distinct matters: the repair layer (see [[repair-protocol]]) operates on chunk indices, the transport layer operates on datagrams, and conflating them was flagged as a design trap to avoid.
+**Chunks** (256 KB–1 MB) are the hash/repair granularity. The design calls for each chunk to be split into **wire packets** (~1200 bytes, MTU-safe) for actual UDP datagrams, keeping the repair layer's chunk-index granularity (see [[repair-protocol]]) distinct from the transport layer's datagram granularity.
+
+**This split was never actually implemented in M1** — a gap that stayed latent until M2 built `Castr.Cli` against real UDP sockets instead of the in-memory test transport (see [[m2-ui-summary]]). `SenderSession` and the UDP transports put an entire encrypted chunk into a single datagram; any chunk whose ciphertext exceeds the practical UDP payload limit (~65507 bytes) fails a send outright and, worse, leaves an already-listening receiver hanging forever with a 0-byte `.part` file and no error. `Castr.Cli` mitigates this in M2 with an upfront fail-fast validation on `--chunk-size` (exit code 5, before any network activity starts), and all three M2 UI surfaces default to an 8 KB chunk size rather than the 256 KB documented here. **The 256 KB–1 MB range above is the target design, not yet a safe operating range** — actually implementing the wire-packet split is tracked as open work for M3.
 
 ## Message types
 
@@ -47,3 +49,4 @@ Session ID = 16 random bytes, sender-generated per transfer, plus a freshness wi
 - [[security-model]]
 - [[adr-0003-payload-encryption]]
 - [[m1.5-encryption-summary]]
+- [[m2-ui-summary]]

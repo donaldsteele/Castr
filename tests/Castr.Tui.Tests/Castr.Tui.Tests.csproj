@@ -22,7 +22,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Castr.Cli\Castr.Cli.csproj" />
+    <ProjectReference Include="..\..\src\Castr.Core\Castr.Core.csproj" />
+    <ProjectReference Include="..\..\src\Castr.Tui\Castr.Tui.csproj" />
   </ItemGroup>
 
 </Project>

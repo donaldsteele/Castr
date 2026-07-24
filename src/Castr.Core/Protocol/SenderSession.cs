@@ -31,8 +31,24 @@ public sealed class SenderSession(
     Key senderEncryptionKey,
     ContentKey contentKey)
 {
+    private readonly object _progressGate = new();
+    private readonly HashSet<string> _grantedReceivers = [];
+    private int _sentChunks;
+    private long _sentBytes;
+    private bool _carouselComplete;
+
+    /// <summary>
+    /// Raised at every meaningful transition (start, each chunk broadcast, carousel completion, each new
+    /// receiver granted the content key) with an immutable snapshot of current progress. Purely
+    /// observational. The carousel and the JOIN/repair handler run concurrently, so handlers may be invoked
+    /// from either task's thread; snapshots are built under an internal lock but the handler itself runs
+    /// outside it. A UI should marshal to its own dispatcher and return quickly.
+    /// </summary>
+    public event Action<TransferProgress>? ProgressChanged;
+
     public async Task RunAsync(CancellationToken cancellationToken)
     {
+        EmitProgress(TransferPhase.Starting);
         await SendAnnounceAsync(cancellationToken).ConfigureAwait(false);
         await SendManifestAsync(cancellationToken).ConfigureAwait(false);
 
@@ -65,8 +81,20 @@ public sealed class SenderSession(
             {
                 ct.ThrowIfCancellationRequested();
                 await SendChunkAsync(fileIndex, chunkIndex, source, tree, requestNonce: null, ct).ConfigureAwait(false);
+
+                int chunkLength = ChunkLayout.GetRange(file.Size, file.ChunkSize, chunkIndex).Length;
+                lock (_progressGate)
+                {
+                    _sentChunks++;
+                    _sentBytes += chunkLength;
+                }
+                EmitProgress(TransferPhase.Transferring);
             }
         }
+
+        lock (_progressGate)
+            _carouselComplete = true;
+        EmitProgress(TransferPhase.Serving);
     }
 
     private async Task HandleIncomingAsync(CancellationToken ct)
@@ -118,6 +146,12 @@ public sealed class SenderSession(
 
         var grant = new KeyGrantMessage(signedManifest.Manifest.SessionId, join.ReceiverId, wrapped);
         await transport.SendAsync(MessageCodec.Encode(grant), ct).ConfigureAwait(false);
+
+        bool isNewReceiver;
+        lock (_progressGate)
+            isNewReceiver = _grantedReceivers.Add(Convert.ToHexString(join.ReceiverId));
+        if (isNewReceiver)
+            EmitProgress(_carouselComplete ? TransferPhase.Serving : TransferPhase.Transferring);
     }
 
     private async Task SendChunkAsync(int fileIndex, int chunkIndex, IFileSource source, MerkleTree tree, byte[]? requestNonce, CancellationToken ct)
@@ -138,5 +172,40 @@ public sealed class SenderSession(
     {
         try { return MessageCodec.Decode(payload); }
         catch { return null; } // malformed/corrupt packet — ignore, don't crash the receive loop
+    }
+
+    private void EmitProgress(TransferPhase phase)
+    {
+        var handler = ProgressChanged;
+        if (handler is null)
+            return;
+
+        TransferProgress snapshot;
+        lock (_progressGate)
+            snapshot = BuildProgressLocked(phase);
+        handler(snapshot);
+    }
+
+    private TransferProgress BuildProgressLocked(TransferPhase phase)
+    {
+        int totalChunks = 0;
+        long totalBytes = 0;
+        foreach (var file in signedManifest.Manifest.Files)
+        {
+            totalChunks += file.ChunkCount;
+            totalBytes += file.Size;
+        }
+
+        return new TransferProgress(
+            TransferRole.Sender,
+            phase,
+            signedManifest.Manifest.TransferName,
+            signedManifest.Manifest.Files.Count,
+            totalChunks,
+            _sentChunks,
+            totalChunks - _sentChunks,
+            totalBytes,
+            _sentBytes,
+            _grantedReceivers.Count);
     }
 }

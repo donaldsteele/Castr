@@ -39,6 +39,7 @@ public sealed class ReceiverSession
     private readonly Func<string, long, IFileSink> _sinkFactory;
     private readonly IPeerTable _peerTable;
     private readonly RepairCoordinator _repairCoordinator;
+    private readonly ITrustPrompt? _trustPrompt;
 
     private readonly Key _encryptionKey;
     private readonly byte[] _encryptionPublicKey;
@@ -49,6 +50,7 @@ public sealed class ReceiverSession
     private readonly HashSet<(int File, int Chunk)> _pendingDecrypt = [];
 
     private ContentKey? _contentKey;
+    private long _verifiedBytes;
 
     public ReceiverSession(
         byte[] receiverId,
@@ -58,7 +60,8 @@ public sealed class ReceiverSession
         ReceiverSessionOptions options,
         Func<string, long, IFileSink> sinkFactory,
         IPeerTable? peerTable = null,
-        RepairCoordinator? repairCoordinator = null)
+        RepairCoordinator? repairCoordinator = null,
+        ITrustPrompt? trustPrompt = null)
     {
         _receiverId = receiverId;
         _trustStore = trustStore;
@@ -68,6 +71,7 @@ public sealed class ReceiverSession
         _sinkFactory = sinkFactory;
         _peerTable = peerTable ?? new PeerTable();
         _repairCoordinator = repairCoordinator ?? new RepairCoordinator(_peerTable, clock);
+        _trustPrompt = trustPrompt;
 
         // Every receiver identity holds its own X25519 encryption keypair (ADR-0003).
         _encryptionKey = EncryptionKeys.Create();
@@ -77,6 +81,14 @@ public sealed class ReceiverSession
     public SignedManifest? Manifest { get; private set; }
 
     public event Action<TrustDecision, PublicKeyId>? SenderTrustDenied;
+
+    /// <summary>
+    /// Raised at every meaningful transition (start, manifest accepted, key granted, each chunk verified,
+    /// completion, trust denial) with an immutable snapshot of current progress. Purely observational —
+    /// subscribing or not changes nothing about the transfer. Handlers run synchronously on the receive
+    /// loop's thread; a UI should marshal to its own dispatcher and return quickly.
+    /// </summary>
+    public event Action<TransferProgress>? ProgressChanged;
 
     /// <summary>Complete only once every chunk is received and verified, the content key has been granted, and all ciphertext has been decrypted and written.</summary>
     public bool IsComplete =>
@@ -89,6 +101,7 @@ public sealed class ReceiverSession
     /// <summary>Processes packets until the transfer completes or cancellation is requested.</summary>
     public async Task RunAsync(CancellationToken cancellationToken)
     {
+        EmitProgress();
         await foreach (var packet in _transport.ReceiveAsync(cancellationToken).ConfigureAwait(false))
         {
             await HandlePacketAsync(packet, cancellationToken).ConfigureAwait(false);
@@ -173,8 +186,9 @@ public sealed class ReceiverSession
 
         var senderId = message.SignedManifest.SenderId;
         var decision = TrustDecisionEngine.Evaluate(senderId, _trustStore, _options.UnknownSenderPolicy, _options.IsInteractive);
-        if (!decision.ShouldProceed)
+        if (!decision.ShouldProceed && !await TryPromptForTrustAsync(decision, message.SignedManifest, senderId, ct).ConfigureAwait(false))
         {
+            EmitProgress(TransferPhase.TrustDenied);
             SenderTrustDenied?.Invoke(decision, senderId);
             return;
         }
@@ -188,9 +202,35 @@ public sealed class ReceiverSession
             _sinks[fileIndex] = _sinkFactory(destination, file.Size);
         }
 
+        EmitProgress();
+
         // Now that the sender's manifest is trusted, request the per-transfer content key (ADR-0003).
         var join = new JoinRequestMessage(Manifest.Manifest.SessionId, _receiverId, _encryptionPublicKey);
         await _transport.SendAsync(MessageCodec.Encode(join), ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// When trust evaluation asked for an interactive decision (<see cref="TrustOutcome.PromptRequired"/>)
+    /// and an <see cref="ITrustPrompt"/> was supplied, consult it. If the human accepts, persist a
+    /// <see cref="TrustStatus.Trusted"/> entry (TOFU) and report success so the transfer proceeds. In every
+    /// other case — no prompt supplied, a non-prompt denial, or the human rejecting — return false so the
+    /// caller denies exactly as before (unchanged behavior).
+    /// </summary>
+    private async Task<bool> TryPromptForTrustAsync(TrustDecision decision, SignedManifest signedManifest, PublicKeyId senderId, CancellationToken ct)
+    {
+        if (decision.Outcome != TrustOutcome.PromptRequired || _trustPrompt is null)
+            return false;
+
+        var manifest = signedManifest.Manifest;
+        long totalBytes = manifest.Files.Sum(f => f.Size);
+        var context = new TrustPromptContext(senderId, manifest.TransferName, manifest.Files.Count, totalBytes);
+
+        if (!await _trustPrompt.RequestTrustAsync(context, ct).ConfigureAwait(false))
+            return false;
+
+        var displayName = string.IsNullOrEmpty(manifest.TransferName) ? senderId.Value : manifest.TransferName;
+        _trustStore.Upsert(new TrustEntry(senderId, displayName, TrustStatus.Trusted, _clock.UtcNow, TrustEntrySource.Manual));
+        return true;
     }
 
     private async Task HandleKeyGrantAsync(KeyGrantMessage grant, CancellationToken ct)
@@ -213,6 +253,8 @@ public sealed class ReceiverSession
         // Drain any ciphertext chunks that arrived (and were verified) before the key did.
         foreach (var key in _pendingDecrypt.ToList())
             await DecryptWriteAndTrackAsync(key.File, key.Chunk, ct).ConfigureAwait(false);
+
+        EmitProgress();
     }
 
     private async Task HandleChunkAsync(byte[] sessionId, int fileIndex, int chunkIndex, byte[] ciphertext, MerkleProof proof, CancellationToken ct)
@@ -228,6 +270,7 @@ public sealed class ReceiverSession
             return; // corrupt or spoofed ciphertext — silently drop; repair will re-request it from someone else
 
         bitmap.Set(chunkIndex);
+        _verifiedBytes += ChunkLayout.GetRange(file.Size, file.ChunkSize, chunkIndex).Length;
         _chunkCache[(fileIndex, chunkIndex)] = (ciphertext, proof); // cached as ciphertext, for peer repair relay
         _repairCoordinator.MarkFulfilled(fileIndex, chunkIndex);
         _pendingDecrypt.Add((fileIndex, chunkIndex));
@@ -237,6 +280,8 @@ public sealed class ReceiverSession
             await DecryptWriteAndTrackAsync(fileIndex, chunkIndex, ct).ConfigureAwait(false);
 
         await BroadcastPeerHaveAsync(fileIndex, ct).ConfigureAwait(false);
+
+        EmitProgress();
     }
 
     private async Task DecryptWriteAndTrackAsync(int fileIndex, int chunkIndex, CancellationToken ct)
@@ -285,4 +330,54 @@ public sealed class ReceiverSession
     }
 
     private static byte[] NewNonce() => Guid.NewGuid().ToByteArray();
+
+    private void EmitProgress() => EmitProgress(CurrentPhase());
+
+    private void EmitProgress(TransferPhase phase)
+    {
+        var handler = ProgressChanged;
+        if (handler is null)
+            return;
+        handler(BuildProgress(phase));
+    }
+
+    private TransferPhase CurrentPhase()
+    {
+        if (Manifest is null)
+            return TransferPhase.Starting;
+        if (IsComplete)
+            return TransferPhase.Completed;
+        return _contentKey is null ? TransferPhase.AwaitingKey : TransferPhase.Transferring;
+    }
+
+    private TransferProgress BuildProgress(TransferPhase phase)
+    {
+        int totalFiles = 0, totalChunks = 0, completedChunks = 0;
+        long totalBytes = 0;
+
+        if (Manifest is not null)
+        {
+            var files = Manifest.Manifest.Files;
+            totalFiles = files.Count;
+            foreach (var file in files)
+            {
+                totalChunks += file.ChunkCount;
+                totalBytes += file.Size;
+            }
+            foreach (var bitmap in _bitmaps.Values)
+                completedChunks += bitmap.CountSet();
+        }
+
+        return new TransferProgress(
+            TransferRole.Receiver,
+            phase,
+            Manifest?.Manifest.TransferName ?? string.Empty,
+            totalFiles,
+            totalChunks,
+            completedChunks,
+            totalChunks - completedChunks,
+            totalBytes,
+            _verifiedBytes,
+            _peerTable.All().Count);
+    }
 }
