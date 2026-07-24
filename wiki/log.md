@@ -17,3 +17,5 @@ Operations:
    graph: +7 nodes, +0 typed edges (mentions-only)
 
 ## [2026-07-24] ingest | M0 spike results (hands-on validation + web research, not a raw file — filed directly as synthesis). Created: adr-0001-ed25519-library, adr-0002-mobile-discovery. Updated (str_replace): tech-stack.md (Open section resolved), roadmap.md (M0 status, open items). Decision consequence: solution retargeted net8.0 → net10.0 LTS; .NET 10 SDK installed via winget.
+
+## [2026-07-24] ingest | M0 closeout: QA subagent review (no defects found across build/tests, project references, git hygiene, LICENSE, wiki consistency, ADR fact-checks, CI, GUI placeholder) and push to github.com:donaldsteele/Castr (main). Updated (str_replace): roadmap.md (M0 marked complete, open items pruned).
