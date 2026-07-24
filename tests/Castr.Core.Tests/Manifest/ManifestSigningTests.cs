@@ -99,7 +99,7 @@ public class ManifestSigningTests
         var chunkHashes = new[] { ChunkHash.Compute("a"u8), ChunkHash.Compute("b"u8), ChunkHash.Compute("c"u8), ChunkHash.Compute("d"u8) };
         var tree = MerkleTree.Build(chunkHashes);
         var manifest = new TransferManifest(
-            new byte[16], "repair-test.bin", DateTimeOffset.UtcNow,
+            new byte[16], "repair-test.bin", DateTimeOffset.UtcNow, SampleEncryptionKey(),
             [new ManifestFileEntry("repair-test.bin", 4000, 1000, 4, tree.Root)]);
         var signed = ManifestSigner.Sign(manifest, key);
 
@@ -119,5 +119,8 @@ public class ManifestSigningTests
         SessionId: Enumerable.Range(0, 16).Select(i => (byte)i).ToArray(),
         TransferName: "photos.zip",
         IssuedAt: DateTimeOffset.Parse("2026-07-24T12:00:00Z"),
+        SenderEncryptionPublicKey: SampleEncryptionKey(),
         Files: [new ManifestFileEntry("photos/beach.jpg", 4_500_000, 262_144, 18, ChunkHash.Compute("root-a"u8))]);
+
+    private static byte[] SampleEncryptionKey() => Enumerable.Range(0, 32).Select(i => (byte)(200 - i)).ToArray();
 }

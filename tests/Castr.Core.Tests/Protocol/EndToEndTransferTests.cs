@@ -24,13 +24,13 @@ public class EndToEndTransferTests
     {
         var originalBytes = RandomBytes(seed: 1, length: 50_000);
         using var key = ManifestSigner.CreateSigningKey();
-        var (signed, sources, trees) = BuildTransfer(key, "photo.jpg", originalBytes, chunkSize: 4096);
+        var transfer = BuildTransfer(key, "photo.jpg", originalBytes, chunkSize: 4096);
 
         var network = new InMemoryNetwork();
         var senderTransport = network.CreateMulticastTransport(new Endpoint("sender", 1));
         var receiverTransport = network.CreateMulticastTransport(new Endpoint("receiver", 1));
 
-        var sender = new SenderSession(signed, sources, trees, senderTransport);
+        var sender = NewSender(transfer, senderTransport);
         var trustStore = TrustedStoreFor(key);
         var (sink, sinkFactory) = MemorySinkFactory();
         var receiver = new ReceiverSession(
@@ -48,10 +48,10 @@ public class EndToEndTransferTests
     {
         var originalBytes = RandomBytes(seed: 2, length: 30_000);
         using var key = ManifestSigner.CreateSigningKey();
-        var (signed, sources, trees) = BuildTransfer(key, "shared.bin", originalBytes, chunkSize: 2048);
+        var transfer = BuildTransfer(key, "shared.bin", originalBytes, chunkSize: 2048);
 
         var network = new InMemoryNetwork();
-        var sender = new SenderSession(signed, sources, trees, network.CreateMulticastTransport(new Endpoint("sender", 1)));
+        var sender = NewSender(transfer, network.CreateMulticastTransport(new Endpoint("sender", 1)));
 
         var receivers = new List<ReceiverSession>();
         var sinks = new List<Func<MemoryFileSink>>();
@@ -75,10 +75,10 @@ public class EndToEndTransferTests
     {
         var originalBytes = RandomBytes(seed: 3, length: 5000);
         using var key = ManifestSigner.CreateSigningKey();
-        var (signed, sources, trees) = BuildTransfer(key, "secret.doc", originalBytes, chunkSize: 1024);
+        var transfer = BuildTransfer(key, "secret.doc", originalBytes, chunkSize: 1024);
 
         var network = new InMemoryNetwork();
-        var sender = new SenderSession(signed, sources, trees, network.CreateMulticastTransport(new Endpoint("sender", 1)));
+        var sender = NewSender(transfer, network.CreateMulticastTransport(new Endpoint("sender", 1)));
 
         var (_, sinkFactory) = MemorySinkFactory();
         var receiver = new ReceiverSession(
@@ -105,11 +105,11 @@ public class EndToEndTransferTests
     {
         var originalBytes = RandomBytes(seed: 4, length: 8000);
         using var key = ManifestSigner.CreateSigningKey();
-        var (signed, sources, trees) = BuildTransfer(key, "data.bin", originalBytes, chunkSize: 1000);
+        var transfer = BuildTransfer(key, "data.bin", originalBytes, chunkSize: 1000);
 
         var network = new InMemoryNetwork();
         var senderTransport = network.CreateMulticastTransport(new Endpoint("sender", 1));
-        var sender = new SenderSession(signed, sources, trees, senderTransport);
+        var sender = NewSender(transfer, senderTransport);
 
         // A corrupting relay: tamper with chunk index 2's payload in-flight, everything else passes through.
         var rawReceiverTransport = network.CreateMulticastTransport(new Endpoint("r", 1));
@@ -137,11 +137,11 @@ public class EndToEndTransferTests
         // which source it came from. NACK-suppressed peer-preferred fulfillment is a documented follow-up.
         var originalBytes = RandomBytes(seed: 5, length: 12_000);
         using var key = ManifestSigner.CreateSigningKey();
-        var (signed, sources, trees) = BuildTransfer(key, "video.mp4", originalBytes, chunkSize: 1500);
+        var transfer = BuildTransfer(key, "video.mp4", originalBytes, chunkSize: 1500);
 
         var network = new InMemoryNetwork();
         var senderTransport = network.CreateMulticastTransport(new Endpoint("sender", 1));
-        var sender = new SenderSession(signed, sources, trees, senderTransport);
+        var sender = NewSender(transfer, senderTransport);
 
         // Receiver B gets everything and will be available to serve repairs.
         var (sinkB, sinkFactoryB) = MemorySinkFactory();
@@ -166,23 +166,94 @@ public class EndToEndTransferTests
         Assert.Equal(originalBytes, sinkB().ToArray());
     }
 
+    [Fact]
+    public async Task ChunkPayloadsOnTheWire_AreCiphertext_ReadableOnlyWithGrantedKey()
+    {
+        var originalBytes = RandomBytes(seed: 6, length: 9000);
+        const int chunkSize = 1000;
+        using var key = ManifestSigner.CreateSigningKey();
+        var transfer = BuildTransfer(key, "top-secret.bin", originalBytes, chunkSize);
+
+        var network = new InMemoryNetwork();
+        var sender = NewSender(transfer, network.CreateMulticastTransport(new Endpoint("sender", 1)));
+
+        // A passive observer of the multicast segment that never joins / trusts / holds the content key.
+        var eavesdropperTransport = network.CreateMulticastTransport(new Endpoint("eve", 1));
+        var captured = new List<ChunkDataMessage>();
+
+        var (sink, sinkFactory) = MemorySinkFactory();
+        var receiver = new ReceiverSession(
+            ReceiverId(1), TrustedStoreFor(key), network.CreateMulticastTransport(new Endpoint("receiver", 1)),
+            new FakeClock(DateTimeOffset.UtcNow), new ReceiverSessionOptions("/root"), sinkFactory);
+
+        using var cts = new CancellationTokenSource(OverallTimeout);
+        var eavesdropTask = Task.Run(async () =>
+        {
+            await foreach (var packet in eavesdropperTransport.ReceiveAsync(cts.Token))
+                if (MessageCodec.Decode(packet.Payload) is ChunkDataMessage cd)
+                    lock (captured) { captured.Add(cd); }
+        }, cts.Token);
+
+        await RunUntilCompleteAsync(sender, receiver);
+        await cts.CancelAsync();
+        await SwallowCancellation(eavesdropTask);
+
+        Assert.True(receiver.IsComplete);
+        Assert.Equal(originalBytes, sink().ToArray());
+
+        // The eavesdropper saw ciphertext, and none of it equals the corresponding plaintext chunk.
+        Assert.NotEmpty(captured);
+        var sessionId = transfer.Signed.Manifest.SessionId;
+        foreach (var cd in captured)
+        {
+            var range = ChunkLayout.GetRange(originalBytes.Length, chunkSize, cd.ChunkIndex);
+            var plaintext = originalBytes.AsSpan((int)range.Offset, range.Length).ToArray();
+            Assert.NotEqual(plaintext, cd.Payload);                       // not sent in the clear
+            Assert.Equal(plaintext.Length + 16, cd.Payload.Length);       // ciphertext + AEAD tag
+
+            // Only a party holding the content key (which the eavesdropper never obtained) can read it.
+            var decrypted = transfer.ContentKey.TryDecryptChunk(sessionId, cd.FileIndex, cd.ChunkIndex, cd.Payload);
+            Assert.Equal(plaintext, decrypted);
+        }
+    }
+
     // ---- helpers ----
 
-    private static (SignedManifest Signed, Dictionary<int, IFileSource> Sources, Dictionary<int, MerkleTree> Trees) BuildTransfer(
+    private sealed record Transfer(
+        SignedManifest Signed,
+        Dictionary<int, IFileSource> Sources,
+        Dictionary<int, MerkleTree> Trees,
+        NSec.Cryptography.Key SenderEncryptionKey,
+        ContentKey ContentKey);
+
+    private static Transfer BuildTransfer(
         NSec.Cryptography.Key key, string relativePath, byte[] bytes, int chunkSize)
     {
+        var sessionId = SessionId();
         var source = new MemoryFileSource(bytes);
-        var hashes = Chunker.ComputeChunkHashesAsync(source, chunkSize).GetAwaiter().GetResult();
+        var contentKey = ContentKey.Generate();
+        var senderEncryptionKey = EncryptionKeys.Create();
+
+        // Merkle tree is built over CIPHERTEXT chunk hashes (ADR-0003).
+        var hashes = EncryptedChunkHasher.ComputeAsync(source, chunkSize, sessionId, fileIndex: 0, contentKey).GetAwaiter().GetResult();
         var tree = MerkleTree.Build(hashes);
         int chunkCount = ChunkLayout.ComputeChunkCount(bytes.Length, chunkSize);
 
         var manifest = new TransferManifest(
-            SessionId(), "test-transfer", DateTimeOffset.UtcNow,
+            sessionId, "test-transfer", DateTimeOffset.UtcNow, EncryptionKeys.ExportPublicKey(senderEncryptionKey),
             [new ManifestFileEntry(relativePath, bytes.Length, chunkSize, chunkCount, tree.Root)]);
         var signed = ManifestSigner.Sign(manifest, key);
 
-        return (signed, new Dictionary<int, IFileSource> { [0] = source }, new Dictionary<int, MerkleTree> { [0] = tree });
+        return new Transfer(
+            signed,
+            new Dictionary<int, IFileSource> { [0] = source },
+            new Dictionary<int, MerkleTree> { [0] = tree },
+            senderEncryptionKey,
+            contentKey);
     }
+
+    private static SenderSession NewSender(Transfer t, IMulticastTransport transport) =>
+        new(t.Signed, t.Sources, t.Trees, transport, t.SenderEncryptionKey, t.ContentKey);
 
     private static ITrustStore TrustedStoreFor(NSec.Cryptography.Key key)
     {

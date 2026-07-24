@@ -26,7 +26,7 @@ public class MessageCodecTests
     {
         using var key = ManifestSigner.CreateSigningKey();
         var manifest = new TransferManifest(
-            Id(16), "photos.zip", DateTimeOffset.Parse("2026-07-24T12:00:00Z"),
+            Id(16), "photos.zip", DateTimeOffset.Parse("2026-07-24T12:00:00Z"), Id(32),
             [new ManifestFileEntry("beach.jpg", 1000, 100, 10, ChunkHash.Compute("root"u8))]);
         var signed = ManifestSigner.Sign(manifest, key);
 
@@ -147,6 +147,30 @@ public class MessageCodecTests
         var decoded = (TransferCompleteMessage)MessageCodec.Decode(MessageCodec.Encode(message));
 
         Assert.Equal(outcome, decoded.Outcome);
+    }
+
+    [Fact]
+    public void JoinRequest_RoundTrips()
+    {
+        var message = new JoinRequestMessage(Id(16), Id(16), Id(32));
+
+        var decoded = (JoinRequestMessage)MessageCodec.Decode(MessageCodec.Encode(message));
+
+        Assert.Equal(message.SessionId, decoded.SessionId);
+        Assert.Equal(message.ReceiverId, decoded.ReceiverId);
+        Assert.Equal(message.ReceiverEncryptionPublicKey, decoded.ReceiverEncryptionPublicKey);
+    }
+
+    [Fact]
+    public void KeyGrant_RoundTrips()
+    {
+        var message = new KeyGrantMessage(Id(16), Id(16), Id(48)); // 32-byte key + 16-byte tag
+
+        var decoded = (KeyGrantMessage)MessageCodec.Decode(MessageCodec.Encode(message));
+
+        Assert.Equal(message.SessionId, decoded.SessionId);
+        Assert.Equal(message.ReceiverId, decoded.ReceiverId);
+        Assert.Equal(message.WrappedContentKey, decoded.WrappedContentKey);
     }
 
     [Fact]

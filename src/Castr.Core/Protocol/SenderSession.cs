@@ -1,26 +1,35 @@
+using NSec.Cryptography;
 using Castr.Core.Chunking;
 using Castr.Core.Manifest;
+using Castr.Core.Security;
 using Castr.Core.Transport;
 
 namespace Castr.Core.Protocol;
 
 /// <summary>
 /// Drives the sender side of a transfer over a single <see cref="IMulticastTransport"/>: announces,
-/// broadcasts the signed manifest, carousels every chunk once, and answers CHUNK_REQUEST with
-/// CHUNK_RESPONSE for any chunk it holds. Requests and responses travel over the same multicast channel
-/// (see wiki/concepts/repair-protocol.md) so any listener — not just the original requester — benefits
-/// from a fulfilled repair.
+/// broadcasts the signed manifest, carousels every chunk once (each chunk encrypted with the per-transfer
+/// content key), grants that content key to each trusting receiver via the JOIN_REQUEST/KEY_GRANT handshake,
+/// and answers CHUNK_REQUEST with CHUNK_RESPONSE for any chunk it holds. Chunk data and repair traffic travel
+/// over the same multicast channel (see wiki/concepts/repair-protocol.md) so any listener — not just the
+/// original requester — benefits from a fulfilled repair.
 /// </summary>
 /// <remarks>
 /// Known M1 scope trim: this sends the chunk carousel exactly once rather than repeating rounds
 /// (FLUTE-style self-healing); fault tolerance instead relies on peer/sender repair via CHUNK_REQUEST,
 /// which is fully implemented. Multi-round carousel repetition is a natural, low-risk future addition.
+/// Per wiki/synthesis/adr-0003-payload-encryption.md the JOIN_REQUEST/KEY_GRANT handshake is logically
+/// per-receiver unicast; like CHUNK_REQUEST/RESPONSE it currently rides the shared multicast channel
+/// (each KEY_GRANT is cryptographically readable only by its addressed receiver, so multicast delivery
+/// leaks nothing) — the same documented M1 trim, not a security relaxation.
 /// </remarks>
 public sealed class SenderSession(
     SignedManifest signedManifest,
     IReadOnlyDictionary<int, IFileSource> fileSources,
     IReadOnlyDictionary<int, MerkleTree> merkleTrees,
-    IMulticastTransport transport)
+    IMulticastTransport transport,
+    Key senderEncryptionKey,
+    ContentKey contentKey)
 {
     public async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -64,28 +73,63 @@ public sealed class SenderSession(
     {
         await foreach (var packet in transport.ReceiveAsync(ct).ConfigureAwait(false))
         {
-            var decoded = TryDecode(packet.Payload);
-            if (decoded is not ChunkRequestMessage request)
-                continue;
-            if (!request.SessionId.AsSpan().SequenceEqual(signedManifest.Manifest.SessionId))
-                continue;
-            if (!fileSources.TryGetValue(request.FileIndex, out var source) || !merkleTrees.TryGetValue(request.FileIndex, out var tree))
-                continue;
-
-            foreach (var chunkIndex in request.ChunkIndices)
-                await SendChunkAsync(request.FileIndex, chunkIndex, source, tree, request.RequestNonce, ct).ConfigureAwait(false);
+            switch (TryDecode(packet.Payload))
+            {
+                case ChunkRequestMessage request:
+                    await HandleChunkRequestAsync(request, ct).ConfigureAwait(false);
+                    break;
+                case JoinRequestMessage join:
+                    await HandleJoinRequestAsync(join, ct).ConfigureAwait(false);
+                    break;
+            }
         }
+    }
+
+    private async Task HandleChunkRequestAsync(ChunkRequestMessage request, CancellationToken ct)
+    {
+        if (!request.SessionId.AsSpan().SequenceEqual(signedManifest.Manifest.SessionId))
+            return;
+        if (!fileSources.TryGetValue(request.FileIndex, out var source) || !merkleTrees.TryGetValue(request.FileIndex, out var tree))
+            return;
+
+        foreach (var chunkIndex in request.ChunkIndices)
+            await SendChunkAsync(request.FileIndex, chunkIndex, source, tree, request.RequestNonce, ct).ConfigureAwait(false);
+    }
+
+    private async Task HandleJoinRequestAsync(JoinRequestMessage join, CancellationToken ct)
+    {
+        if (!join.SessionId.AsSpan().SequenceEqual(signedManifest.Manifest.SessionId))
+            return;
+
+        // The receiver has, by definition, already verified and trusted this sender's signed manifest before
+        // sending a JOIN_REQUEST — so the sender wraps the content key for anyone who completes the handshake
+        // (the authorization boundary is unchanged; encryption only stops passive eavesdroppers). See ADR-0003.
+        byte[] wrapped;
+        try
+        {
+            wrapped = ContentKeyWrap.Wrap(
+                senderEncryptionKey, join.ReceiverEncryptionPublicKey,
+                signedManifest.Manifest.SessionId, join.ReceiverId, contentKey.Export());
+        }
+        catch (Exception ex) when (ex is ArgumentException or FormatException or System.Security.Cryptography.CryptographicException)
+        {
+            return; // malformed receiver public key — ignore, don't crash the receive loop
+        }
+
+        var grant = new KeyGrantMessage(signedManifest.Manifest.SessionId, join.ReceiverId, wrapped);
+        await transport.SendAsync(MessageCodec.Encode(grant), ct).ConfigureAwait(false);
     }
 
     private async Task SendChunkAsync(int fileIndex, int chunkIndex, IFileSource source, MerkleTree tree, byte[]? requestNonce, CancellationToken ct)
     {
         var file = signedManifest.Manifest.Files[fileIndex];
-        var payload = await Chunker.ReadChunkAsync(source, file.ChunkSize, chunkIndex, ct).ConfigureAwait(false);
+        var plaintext = await Chunker.ReadChunkAsync(source, file.ChunkSize, chunkIndex, ct).ConfigureAwait(false);
+        var ciphertext = contentKey.EncryptChunk(signedManifest.Manifest.SessionId, fileIndex, chunkIndex, plaintext);
         var proof = tree.GetProof(chunkIndex);
 
         object message = requestNonce is null
-            ? new ChunkDataMessage(signedManifest.Manifest.SessionId, fileIndex, chunkIndex, payload, proof)
-            : new ChunkResponseMessage(signedManifest.Manifest.SessionId, requestNonce, fileIndex, chunkIndex, payload, proof);
+            ? new ChunkDataMessage(signedManifest.Manifest.SessionId, fileIndex, chunkIndex, ciphertext, proof)
+            : new ChunkResponseMessage(signedManifest.Manifest.SessionId, requestNonce, fileIndex, chunkIndex, ciphertext, proof);
 
         await transport.SendAsync(MessageCodec.Encode(message), ct).ConfigureAwait(false);
     }

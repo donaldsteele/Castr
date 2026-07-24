@@ -32,7 +32,7 @@ The trust, signing, integrity, confidentiality, and path-safety design for [[cas
 - The content key is distributed confidentially, per receiver: once a receiver trusts a sender's signed manifest, it sends a unicast `JOIN_REQUEST` with its X25519 public key; the sender derives a shared secret via X25519 + HKDF-SHA256, wraps the content key with ChaCha20-Poly1305, and returns it via unicast `KEY_GRANT`. The chunk carousel and repair traffic itself stay fully multicast — only this small per-receiver key handshake is unicast.
 - The authorization boundary is unchanged: a sender grants the key to anyone who completes the handshake (i.e. anyone who already independently trusted the sender's signature). Encryption stops *passive* eavesdroppers who never made that trust decision, not active participants — that's a receiver-side decision today, same as before.
 - **Known scope boundary**: only chunk payloads are encrypted in this design, not the MANIFEST's file names/sizes. Encrypting manifest metadata too is a documented, straightforward follow-up if a deployment needs it — not required for the initial design.
-- **Implementation status**: design decided and validated against NSec.Cryptography (no new dependency); **not yet implemented in the M1 code**, which currently sends plaintext. See [[roadmap]] for the retrofit plan.
+- **Implementation status**: implemented in [[m1.5-encryption-summary]] (milestone M1.5). `Castr.Core` now sends only ciphertext chunk payloads; QA-reviewed with confirmed adversarial checks (tamper rejection, cross-context AAD rejection, nonce-uniqueness across files, MITM-proof manifest binding, TOFU not bypassable via the new handshake).
 
 ## Path safety (traversal prevention)
 
@@ -49,3 +49,4 @@ This directly answers the "optional location to write the file" requirement from
 - [[repair-protocol]]
 - [[tech-stack]]
 - [[adr-0003-payload-encryption]]
+- [[m1.5-encryption-summary]]

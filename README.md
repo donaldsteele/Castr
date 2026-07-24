@@ -3,8 +3,9 @@
 A cross-platform LAN multicast file transfer tool. A trusted sender broadcasts a
 file once over IP multicast; any number of receivers on the network pick it up
 simultaneously, verify it via a signed, chunk-hashed manifest, decrypt it (chunk
-payloads are encrypted end-to-end, not just signed — see below), and repair any
-lost chunks by requesting them from peer receivers rather than re-asking the sender.
+payloads are encrypted end-to-end with ChaCha20-Poly1305, not just signed — see
+below), and repair any lost chunks by requesting them from peer receivers rather
+than re-asking the sender.
 
 Runs on Windows, macOS, and Linux with full IP multicast; iOS and Android join the
 same swarm as unicast clients over LAN-discovered peers, since neither OS allows
@@ -12,10 +13,10 @@ apps to reliably join true multicast groups.
 
 ## Status
 
-M0 (scaffolding) and M1 (core protocol) complete; M1.5 (payload encryption
-retrofit) is next and blocks M2 (CLI/TUI/desktop GUI). M1 shipped before the
-decision to encrypt payloads was made, so the code currently on `main` still
-sends chunk payloads in the clear — see `wiki/synthesis/adr-0003-payload-encryption.md`.
+M0 (scaffolding), M1 (core protocol), and M1.5 (payload encryption retrofit)
+are complete; M2 (CLI/TUI/desktop GUI) is next and unblocked. Chunk payloads
+are now ChaCha20-Poly1305-encrypted end-to-end — see
+`wiki/synthesis/m1.5-encryption-summary.md` and `wiki/synthesis/adr-0003-payload-encryption.md`.
 See `wiki/synthesis/roadmap.md` for milestone status and
 `wiki/` generally for the accumulated design decisions (ADRs, spike results). The
 full architecture — wire protocol, repair algorithm, security model, and milestone

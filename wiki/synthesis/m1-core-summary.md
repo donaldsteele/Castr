@@ -11,7 +11,7 @@ updated: 2026-07-24
 
 M1 (the largest, highest-risk milestone per [[roadmap]]) is complete: the full protocol core — chunking, Merkle verification, manifest signing, trust, path safety, wire messages, transport, and the sender/receiver session state machines — is implemented, unit-tested (167 tests in `Castr.Core.Tests`), and integration-tested over real UDP sockets (4 tests in `Castr.Core.IntegrationTests`).
 
-> **Superseded security posture, kept here as accurate history.** Everything below describes M1 exactly as it shipped, including chunk payloads traveling in the clear (matching the original M0 "integrity/authenticity only, no encryption" decision that was in force at the time). That decision was reversed shortly after M1 shipped — see [[adr-0003-payload-encryption]] and the current [[security-model]] — because LAN multicast traffic is visible to any device on the segment, not just devices the receiver has chosen to trust. The plaintext-payload behavior described here is now a known gap being retrofitted in **M1.5** (see [[roadmap]]), not the current target design. Don't build new work against the wire format as described in this page without checking [[wire-protocol]] and [[adr-0003-payload-encryption]] first.
+> **Superseded security posture, kept here as accurate history.** Everything below describes M1 exactly as it shipped, including chunk payloads traveling in the clear (matching the original M0 "integrity/authenticity only, no encryption" decision that was in force at the time). That decision was reversed shortly after M1 shipped — see [[adr-0003-payload-encryption]] and the current [[security-model]] — because LAN multicast traffic is visible to any device on the segment, not just devices the receiver has chosen to trust. The plaintext-payload behavior described here has since been retrofitted and closed in **M1.5** (see [[m1.5-encryption-summary]]) — `Castr.Core` now sends ciphertext-only chunk payloads. Don't build new work against the wire format as described in this page without checking [[wire-protocol]] and [[m1.5-encryption-summary]] first.
 
 ## What was built
 
@@ -55,3 +55,4 @@ CI multicast behavior on GitHub-hosted runners (windows-latest, macos-latest, ub
 - [[tech-stack]]
 - [[adr-0001-ed25519-library]]
 - [[adr-0003-payload-encryption]]
+- [[m1.5-encryption-summary]]

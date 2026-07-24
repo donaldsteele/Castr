@@ -88,6 +88,20 @@ public static class MessageCodec
                 stream.WriteByte((byte)m.Outcome);
                 break;
 
+            case JoinRequestMessage m:
+                stream.WriteByte((byte)MessageType.JoinRequest);
+                WriteFixed(stream, m.SessionId, SessionIdSize);
+                WriteFixed(stream, m.ReceiverId, IdSize);
+                WriteFixed(stream, m.ReceiverEncryptionPublicKey, PublicKeySize);
+                break;
+
+            case KeyGrantMessage m:
+                stream.WriteByte((byte)MessageType.KeyGrant);
+                WriteFixed(stream, m.SessionId, SessionIdSize);
+                WriteFixed(stream, m.ReceiverId, IdSize);
+                WriteVarBytes(stream, m.WrappedContentKey);
+                break;
+
             default:
                 throw new ArgumentException($"Unknown message type: {message.GetType()}", nameof(message));
         }
@@ -151,6 +165,16 @@ public static class MessageCodec
                 reader.ReadBytes(SessionIdSize).ToArray(),
                 reader.ReadBytes(IdSize).ToArray(),
                 (TransferOutcome)reader.ReadByte()),
+
+            MessageType.JoinRequest => new JoinRequestMessage(
+                reader.ReadBytes(SessionIdSize).ToArray(),
+                reader.ReadBytes(IdSize).ToArray(),
+                reader.ReadBytes(PublicKeySize).ToArray()),
+
+            MessageType.KeyGrant => new KeyGrantMessage(
+                reader.ReadBytes(SessionIdSize).ToArray(),
+                reader.ReadBytes(IdSize).ToArray(),
+                reader.ReadVarBytes()),
 
             _ => throw new InvalidDataException($"Unknown message type tag {(byte)type}."),
         };

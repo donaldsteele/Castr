@@ -61,11 +61,30 @@ public class ManifestCodecTests
             SessionId: new byte[16],
             TransferName: "empty-transfer",
             IssuedAt: DateTimeOffset.UnixEpoch,
+            SenderEncryptionPublicKey: SampleEncryptionKey(),
             Files: []);
 
         var decoded = ManifestCodec.Decode(ManifestCodec.Encode(manifest));
 
         Assert.Empty(decoded.Files);
+    }
+
+    [Fact]
+    public void Encode_SenderEncryptionPublicKey_RoundTrips()
+    {
+        var manifest = SampleManifest();
+
+        var decoded = ManifestCodec.Decode(ManifestCodec.Encode(manifest));
+
+        Assert.Equal(manifest.SenderEncryptionPublicKey, decoded.SenderEncryptionPublicKey);
+    }
+
+    [Fact]
+    public void Encode_WrongEncryptionKeyLength_Throws()
+    {
+        var manifest = SampleManifest() with { SenderEncryptionPublicKey = new byte[8] };
+
+        Assert.Throws<ArgumentException>(() => ManifestCodec.Encode(manifest));
     }
 
     [Fact]
@@ -89,9 +108,12 @@ public class ManifestCodecTests
         SessionId: Enumerable.Range(0, 16).Select(i => (byte)i).ToArray(),
         TransferName: "photos.zip",
         IssuedAt: DateTimeOffset.Parse("2026-07-24T12:00:00Z"),
+        SenderEncryptionPublicKey: SampleEncryptionKey(),
         Files:
         [
             new ManifestFileEntry("photos/beach.jpg", 4_500_000, 262_144, 18, ChunkHash.Compute("root-a"u8)),
             new ManifestFileEntry("photos/mountains.jpg", 6_100_000, 262_144, 24, ChunkHash.Compute("root-b"u8)),
         ]);
+
+    private static byte[] SampleEncryptionKey() => Enumerable.Range(0, 32).Select(i => (byte)(200 - i)).ToArray();
 }

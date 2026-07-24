@@ -34,7 +34,7 @@ All messages travel over a configurable administratively-scoped multicast group 
 
 ## Payload encryption and the JOIN_REQUEST/KEY_GRANT handshake
 
-See [[adr-0003-payload-encryption]] for the full design. In short: chunk payloads (`CHUNK_DATA`/`CHUNK_RESPONSE`) are ChaCha20-Poly1305-encrypted under a per-transfer content key that never travels over multicast in the clear. A receiver obtains it via a small unicast handshake (`JOIN_REQUEST` → `KEY_GRANT`) *after* it has already decided to trust the sender's signed manifest — the data plane (chunk carousel, repair) stays fully multicast; only this per-receiver key exchange is unicast. **Not yet implemented as of M1** — M1's `Castr.Core` currently sends plaintext chunk payloads; see [[roadmap]] for the retrofit plan.
+See [[adr-0003-payload-encryption]] for the full design. In short: chunk payloads (`CHUNK_DATA`/`CHUNK_RESPONSE`) are ChaCha20-Poly1305-encrypted under a per-transfer content key that never travels over multicast in the clear. A receiver obtains it via a small unicast handshake (`JOIN_REQUEST` → `KEY_GRANT`) *after* it has already decided to trust the sender's signed manifest — the data plane (chunk carousel, repair) stays fully multicast; only this per-receiver key exchange is unicast. **Implemented in M1.5** — see [[m1.5-encryption-summary]]. One deliberate deviation from the description above: `JOIN_REQUEST`/`KEY_GRANT` actually travel over the same shared multicast channel as everything else, not a separate unicast socket, matching the existing MVP trim already applied to `CHUNK_REQUEST`/`CHUNK_RESPONSE` (see [[m1-core-summary]]); `KEY_GRANT` stays confidential because it's cryptographically readable only by its addressed receiver.
 
 ## Replay protection
 
@@ -46,3 +46,4 @@ Session ID = 16 random bytes, sender-generated per transfer, plus a freshness wi
 - [[repair-protocol]]
 - [[security-model]]
 - [[adr-0003-payload-encryption]]
+- [[m1.5-encryption-summary]]

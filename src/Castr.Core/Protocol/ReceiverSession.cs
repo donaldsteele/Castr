@@ -1,3 +1,4 @@
+using NSec.Cryptography;
 using Castr.Core.Chunking;
 using Castr.Core.Manifest;
 using Castr.Core.Security;
@@ -14,17 +15,19 @@ public sealed record ReceiverSessionOptions(
 
 /// <summary>
 /// Drives the receiver side of a single transfer over one <see cref="IMulticastTransport"/>: evaluates
-/// sender trust, verifies the signed manifest, verifies and writes each chunk via its Merkle proof,
-/// tracks per-file completion, broadcasts PEER_HAVE, and both requests and serves repairs.
+/// sender trust, verifies the signed manifest, joins the transfer to obtain the per-transfer content key
+/// (JOIN_REQUEST/KEY_GRANT), verifies each chunk's <b>ciphertext</b> via its Merkle proof, decrypts it, writes
+/// the plaintext, tracks per-file completion, broadcasts PEER_HAVE, and both requests and serves repairs.
 /// </summary>
 /// <remarks>
-/// A receiver re-serves chunks to peers by caching the exact (payload, proof) pair it already verified
-/// for that chunk — not by reconstructing the file's full Merkle tree, which it never has. The proof is a
-/// self-contained artifact of leaf index + tree shape, so it verifies identically no matter who relays it.
-/// Known M1 scope trim: CHUNK_REQUEST/RESPONSE both travel over the shared multicast channel rather than
-/// being unicast-addressed to a specific peer — simpler, and consistent with "any listener can answer."
-/// <see cref="RepairCoordinator"/>'s per-plan Target is still computed and tested for when a future pass
-/// wires in targeted unicast (needed for the mobile tier regardless).
+/// Merkle verification and AEAD decryption are two independent checks (see ADR-0003): the proof binds the
+/// ciphertext to the signed transfer at a specific position; the AEAD tag independently authenticates the
+/// ciphertext's integrity. A chunk is therefore verifiable (and re-servable to peers) the moment it arrives,
+/// even before the content key does — the receiver caches the exact (ciphertext, proof) pair it verified and
+/// decrypts it once the KEY_GRANT lands. A relaying peer forwards that ciphertext without needing to read it.
+/// Known M1 scope trim (unchanged): CHUNK_REQUEST/RESPONSE — and now JOIN_REQUEST/KEY_GRANT — travel over the
+/// shared multicast channel rather than being unicast-addressed; correctness is unaffected because each
+/// KEY_GRANT is cryptographically readable only by its addressed receiver.
 /// </remarks>
 public sealed class ReceiverSession
 {
@@ -37,9 +40,15 @@ public sealed class ReceiverSession
     private readonly IPeerTable _peerTable;
     private readonly RepairCoordinator _repairCoordinator;
 
+    private readonly Key _encryptionKey;
+    private readonly byte[] _encryptionPublicKey;
+
     private readonly Dictionary<int, ChunkBitmap> _bitmaps = [];
     private readonly Dictionary<int, IFileSink> _sinks = [];
-    private readonly Dictionary<(int File, int Chunk), (byte[] Payload, MerkleProof Proof)> _chunkCache = [];
+    private readonly Dictionary<(int File, int Chunk), (byte[] Ciphertext, MerkleProof Proof)> _chunkCache = [];
+    private readonly HashSet<(int File, int Chunk)> _pendingDecrypt = [];
+
+    private ContentKey? _contentKey;
 
     public ReceiverSession(
         byte[] receiverId,
@@ -59,14 +68,23 @@ public sealed class ReceiverSession
         _sinkFactory = sinkFactory;
         _peerTable = peerTable ?? new PeerTable();
         _repairCoordinator = repairCoordinator ?? new RepairCoordinator(_peerTable, clock);
+
+        // Every receiver identity holds its own X25519 encryption keypair (ADR-0003).
+        _encryptionKey = EncryptionKeys.Create();
+        _encryptionPublicKey = EncryptionKeys.ExportPublicKey(_encryptionKey);
     }
 
     public SignedManifest? Manifest { get; private set; }
 
     public event Action<TrustDecision, PublicKeyId>? SenderTrustDenied;
 
+    /// <summary>Complete only once every chunk is received and verified, the content key has been granted, and all ciphertext has been decrypted and written.</summary>
     public bool IsComplete =>
-        Manifest is not null && _bitmaps.Count == Manifest.Manifest.Files.Count && _bitmaps.Values.All(b => b.IsComplete);
+        Manifest is not null
+        && _contentKey is not null
+        && _bitmaps.Count == Manifest.Manifest.Files.Count
+        && _bitmaps.Values.All(b => b.IsComplete)
+        && _pendingDecrypt.Count == 0;
 
     /// <summary>Processes packets until the transfer completes or cancellation is requested.</summary>
     public async Task RunAsync(CancellationToken cancellationToken)
@@ -84,6 +102,15 @@ public sealed class ReceiverSession
     {
         if (Manifest is null)
             return;
+
+        // Re-drive the content-key handshake until it succeeds: a single KEY_GRANT can be lost (it rides the
+        // lossy multicast data plane), and without the content key no ciphertext can be decrypted. Each retry
+        // prompts the sender to re-wrap and re-send. Cheap, and it reuses the caller's existing repair timer.
+        if (_contentKey is null)
+        {
+            var join = new JoinRequestMessage(Manifest.Manifest.SessionId, _receiverId, _encryptionPublicKey);
+            await _transport.SendAsync(MessageCodec.Encode(join), cancellationToken).ConfigureAwait(false);
+        }
 
         for (int fileIndex = 0; fileIndex < Manifest.Manifest.Files.Count; fileIndex++)
         {
@@ -113,7 +140,10 @@ public sealed class ReceiverSession
         switch (decoded)
         {
             case ManifestMessage manifestMessage:
-                await HandleManifestAsync(manifestMessage).ConfigureAwait(false);
+                await HandleManifestAsync(manifestMessage, ct).ConfigureAwait(false);
+                break;
+            case KeyGrantMessage keyGrant:
+                await HandleKeyGrantAsync(keyGrant, ct).ConfigureAwait(false);
                 break;
             case ChunkDataMessage chunkData:
                 await HandleChunkAsync(chunkData.SessionId, chunkData.FileIndex, chunkData.ChunkIndex, chunkData.Payload, chunkData.Proof, ct).ConfigureAwait(false);
@@ -129,23 +159,24 @@ public sealed class ReceiverSession
                 await HandleChunkRequestAsync(chunkRequest, ct).ConfigureAwait(false);
                 break;
             // AnnounceMessage: nothing to do in this MVP — trust and initialization both happen on MANIFEST.
+            // JoinRequestMessage: a peer's request to the sender — not our concern.
         }
     }
 
-    private Task HandleManifestAsync(ManifestMessage message)
+    private async Task HandleManifestAsync(ManifestMessage message, CancellationToken ct)
     {
         if (Manifest is not null)
-            return Task.CompletedTask; // one-shot session: first accepted manifest wins
+            return; // one-shot session: first accepted manifest wins
 
         if (!ManifestVerifier.VerifySignature(message.SignedManifest))
-            return Task.CompletedTask; // invalid signature — forged or corrupt, reject outright
+            return; // invalid signature — forged or corrupt, reject outright
 
         var senderId = message.SignedManifest.SenderId;
         var decision = TrustDecisionEngine.Evaluate(senderId, _trustStore, _options.UnknownSenderPolicy, _options.IsInteractive);
         if (!decision.ShouldProceed)
         {
             SenderTrustDenied?.Invoke(decision, senderId);
-            return Task.CompletedTask;
+            return;
         }
 
         Manifest = message.SignedManifest;
@@ -157,10 +188,34 @@ public sealed class ReceiverSession
             _sinks[fileIndex] = _sinkFactory(destination, file.Size);
         }
 
-        return Task.CompletedTask;
+        // Now that the sender's manifest is trusted, request the per-transfer content key (ADR-0003).
+        var join = new JoinRequestMessage(Manifest.Manifest.SessionId, _receiverId, _encryptionPublicKey);
+        await _transport.SendAsync(MessageCodec.Encode(join), ct).ConfigureAwait(false);
     }
 
-    private async Task HandleChunkAsync(byte[] sessionId, int fileIndex, int chunkIndex, byte[] payload, MerkleProof proof, CancellationToken ct)
+    private async Task HandleKeyGrantAsync(KeyGrantMessage grant, CancellationToken ct)
+    {
+        if (Manifest is null || _contentKey is not null)
+            return;
+        if (!grant.SessionId.AsSpan().SequenceEqual(Manifest.Manifest.SessionId))
+            return;
+        if (!grant.ReceiverId.AsSpan().SequenceEqual(_receiverId))
+            return; // addressed to a different receiver
+
+        var raw = ContentKeyWrap.TryUnwrap(
+            _encryptionKey, Manifest.Manifest.SenderEncryptionPublicKey,
+            Manifest.Manifest.SessionId, _receiverId, grant.WrappedContentKey);
+        if (raw is null)
+            return; // could not unwrap (spoofed grant or mismatched key) — ignore
+
+        _contentKey = ContentKey.Import(raw);
+
+        // Drain any ciphertext chunks that arrived (and were verified) before the key did.
+        foreach (var key in _pendingDecrypt.ToList())
+            await DecryptWriteAndTrackAsync(key.File, key.Chunk, ct).ConfigureAwait(false);
+    }
+
+    private async Task HandleChunkAsync(byte[] sessionId, int fileIndex, int chunkIndex, byte[] ciphertext, MerkleProof proof, CancellationToken ct)
     {
         if (Manifest is null || !sessionId.AsSpan().SequenceEqual(Manifest.Manifest.SessionId))
             return;
@@ -168,21 +223,40 @@ public sealed class ReceiverSession
             return;
 
         var file = Manifest.Manifest.Files[fileIndex];
-        var chunkHash = ChunkHash.Compute(payload);
-        if (!ManifestVerifier.VerifyChunk(file.MerkleRoot, chunkHash, proof))
-            return; // corrupt or spoofed — silently drop; repair will re-request it from someone else
-
-        var range = ChunkLayout.GetRange(file.Size, file.ChunkSize, chunkIndex);
-        await _sinks[fileIndex].WriteAsync(range.Offset, payload, ct).ConfigureAwait(false);
+        var ciphertextHash = ChunkHash.Compute(ciphertext);
+        if (!ManifestVerifier.VerifyChunk(file.MerkleRoot, ciphertextHash, proof))
+            return; // corrupt or spoofed ciphertext — silently drop; repair will re-request it from someone else
 
         bitmap.Set(chunkIndex);
-        _chunkCache[(fileIndex, chunkIndex)] = (payload, proof);
+        _chunkCache[(fileIndex, chunkIndex)] = (ciphertext, proof); // cached as ciphertext, for peer repair relay
         _repairCoordinator.MarkFulfilled(fileIndex, chunkIndex);
+        _pendingDecrypt.Add((fileIndex, chunkIndex));
 
-        if (bitmap.IsComplete && _sinks[fileIndex] is FileSystemFileSink diskSink)
-            diskSink.Complete();
+        // Decrypt-and-write now if we already hold the content key; otherwise it stays pending until KEY_GRANT.
+        if (_contentKey is not null)
+            await DecryptWriteAndTrackAsync(fileIndex, chunkIndex, ct).ConfigureAwait(false);
 
         await BroadcastPeerHaveAsync(fileIndex, ct).ConfigureAwait(false);
+    }
+
+    private async Task DecryptWriteAndTrackAsync(int fileIndex, int chunkIndex, CancellationToken ct)
+    {
+        var (ciphertext, _) = _chunkCache[(fileIndex, chunkIndex)];
+        var plaintext = _contentKey!.TryDecryptChunk(Manifest!.Manifest.SessionId, fileIndex, chunkIndex, ciphertext);
+        if (plaintext is null)
+            return; // Merkle-valid ciphertext that fails AEAD should not happen with the right key; leave pending.
+
+        var file = Manifest.Manifest.Files[fileIndex];
+        var range = ChunkLayout.GetRange(file.Size, file.ChunkSize, chunkIndex);
+        await _sinks[fileIndex].WriteAsync(range.Offset, plaintext, ct).ConfigureAwait(false);
+        _pendingDecrypt.Remove((fileIndex, chunkIndex));
+
+        if (_bitmaps[fileIndex].IsComplete
+            && !_pendingDecrypt.Any(k => k.File == fileIndex)
+            && _sinks[fileIndex] is FileSystemFileSink diskSink)
+        {
+            diskSink.Complete();
+        }
     }
 
     private async Task HandleChunkRequestAsync(ChunkRequestMessage request, CancellationToken ct)
@@ -198,7 +272,7 @@ public sealed class ReceiverSession
                 continue; // we don't have it either — let someone else (or the sender) answer
 
             var response = new ChunkResponseMessage(
-                Manifest.Manifest.SessionId, request.RequestNonce, request.FileIndex, chunkIndex, cached.Payload, cached.Proof);
+                Manifest.Manifest.SessionId, request.RequestNonce, request.FileIndex, chunkIndex, cached.Ciphertext, cached.Proof);
             await _transport.SendAsync(MessageCodec.Encode(response), ct).ConfigureAwait(false);
         }
     }

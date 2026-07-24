@@ -30,12 +30,16 @@ public class RealTransferRepairTests
         const int chunkSize = 2000;
 
         using var key = ManifestSigner.CreateSigningKey();
+        var sessionId = new byte[16];
         var source = new MemoryFileSource(originalBytes);
-        var hashes = await Chunker.ComputeChunkHashesAsync(source, chunkSize);
+        using var contentKey = ContentKey.Generate();
+        using var senderEncryptionKey = EncryptionKeys.Create();
+        // Merkle tree over ciphertext chunk hashes (ADR-0003).
+        var hashes = await EncryptedChunkHasher.ComputeAsync(source, chunkSize, sessionId, fileIndex: 0, contentKey);
         var tree = MerkleTree.Build(hashes);
         int chunkCount = ChunkLayout.ComputeChunkCount(originalBytes.Length, chunkSize);
         var manifest = new TransferManifest(
-            new byte[16], "real-socket-transfer", DateTimeOffset.UtcNow,
+            sessionId, "real-socket-transfer", DateTimeOffset.UtcNow, EncryptionKeys.ExportPublicKey(senderEncryptionKey),
             [new ManifestFileEntry("payload.bin", originalBytes.Length, chunkSize, chunkCount, tree.Root)]);
         var signed = ManifestSigner.Sign(manifest, key);
 
@@ -44,7 +48,9 @@ public class RealTransferRepairTests
             signed,
             new Dictionary<int, IFileSource> { [0] = source },
             new Dictionary<int, MerkleTree> { [0] = tree },
-            senderTransport);
+            senderTransport,
+            senderEncryptionKey,
+            contentKey);
 
         var trustStore = new InMemoryTrustStore();
         var publicKey = key.PublicKey.Export(NSec.Cryptography.KeyBlobFormat.RawPublicKey);

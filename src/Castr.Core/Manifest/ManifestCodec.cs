@@ -17,6 +17,8 @@ public static class ManifestCodec
     {
         if (manifest.SessionId.Length != TransferManifest.SessionIdSize)
             throw new ArgumentException($"SessionId must be exactly {TransferManifest.SessionIdSize} bytes.", nameof(manifest));
+        if (manifest.SenderEncryptionPublicKey.Length != TransferManifest.EncryptionPublicKeySize)
+            throw new ArgumentException($"SenderEncryptionPublicKey must be exactly {TransferManifest.EncryptionPublicKeySize} bytes.", nameof(manifest));
 
         using var stream = new MemoryStream();
 
@@ -24,6 +26,7 @@ public static class ManifestCodec
         stream.Write(manifest.SessionId);
         WriteString(stream, manifest.TransferName);
         WriteInt64(stream, manifest.IssuedAt.ToUnixTimeSeconds());
+        stream.Write(manifest.SenderEncryptionPublicKey);
         WriteUInt16(stream, checked((ushort)manifest.Files.Count));
 
         foreach (var file in manifest.Files)
@@ -49,6 +52,7 @@ public static class ManifestCodec
         var sessionId = reader.ReadBytes(TransferManifest.SessionIdSize).ToArray();
         string transferName = reader.ReadString();
         var issuedAt = DateTimeOffset.FromUnixTimeSeconds(reader.ReadInt64());
+        var senderEncryptionPublicKey = reader.ReadBytes(TransferManifest.EncryptionPublicKeySize).ToArray();
         ushort fileCount = reader.ReadUInt16();
 
         var files = new ManifestFileEntry[fileCount];
@@ -62,7 +66,7 @@ public static class ManifestCodec
             files[i] = new ManifestFileEntry(relativePath, size, chunkSize, chunkCount, root);
         }
 
-        return new TransferManifest(sessionId, transferName, issuedAt, files);
+        return new TransferManifest(sessionId, transferName, issuedAt, senderEncryptionPublicKey, files);
     }
 
     private static void WriteString(Stream stream, string value)
