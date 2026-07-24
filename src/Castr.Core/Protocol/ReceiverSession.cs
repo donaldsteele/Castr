@@ -40,6 +40,22 @@ public sealed class ReceiverSession
     private readonly IPeerTable _peerTable;
     private readonly RepairCoordinator _repairCoordinator;
     private readonly ITrustPrompt? _trustPrompt;
+    private readonly int _maxDatagramPayloadBytes;
+    private readonly PacketReassembler _reassembler = new();
+
+    // Serializes the two concurrent drivers of a receive (ReceiveRunner runs RunAsync and the repair loop
+    // that calls RequestRepairsAsync via Task.WhenAll on separate tasks). All the mutable transfer state below
+    // — _bitmaps, _sinks, _chunkCache, _pendingDecrypt, _contentKey, _verifiedBytes, the ChunkBitmaps, the
+    // RepairCoordinator and PeerTable — is otherwise touched from both without any synchronization, which
+    // races (observed under the container E2E fan-out as KeyNotFoundException reading a not-yet-populated
+    // _bitmaps entry and "Collection was modified" enumerating state mid-mutation). One gate held around each
+    // packet-handle and each repair pass makes those two flows mutually exclusive.
+    private readonly SemaphoreSlim _stateGate = new(1, 1);
+
+    // Replaced once the manifest is accepted with an instance bounded by that transfer's known chunk size, so an
+    // attacker cannot force an allocation larger than a legitimate chunk. Until then no chunk packet is processed
+    // (HandleChunkPacketAsync early-returns while Manifest is null), so the wide default bound is never exercised.
+    private ChunkPacketAssembler _chunkAssembler = new();
 
     private readonly Key _encryptionKey;
     private readonly byte[] _encryptionPublicKey;
@@ -61,7 +77,8 @@ public sealed class ReceiverSession
         Func<string, long, IFileSink> sinkFactory,
         IPeerTable? peerTable = null,
         RepairCoordinator? repairCoordinator = null,
-        ITrustPrompt? trustPrompt = null)
+        ITrustPrompt? trustPrompt = null,
+        int maxDatagramPayloadBytes = WirePacketizer.DefaultMaxDatagramPayload)
     {
         _receiverId = receiverId;
         _trustStore = trustStore;
@@ -72,6 +89,7 @@ public sealed class ReceiverSession
         _peerTable = peerTable ?? new PeerTable();
         _repairCoordinator = repairCoordinator ?? new RepairCoordinator(_peerTable, clock);
         _trustPrompt = trustPrompt;
+        _maxDatagramPayloadBytes = maxDatagramPayloadBytes;
 
         // Every receiver identity holds its own X25519 encryption keypair (ADR-0003).
         _encryptionKey = EncryptionKeys.Create();
@@ -104,10 +122,31 @@ public sealed class ReceiverSession
         EmitProgress();
         await foreach (var packet in _transport.ReceiveAsync(cancellationToken).ConfigureAwait(false))
         {
-            await HandlePacketAsync(packet, cancellationToken).ConfigureAwait(false);
-            if (IsComplete)
-                return;
+            // Reassemble MTU-safe wire packets back into a whole message before decoding; a chunk that is
+            // still missing fragments simply never surfaces here and stays "not received" until repair.
+            var payload = _reassembler.Offer(packet.Payload);
+            if (payload is null)
+                continue;
+
+            await _stateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await HandlePacketAsync(payload, cancellationToken).ConfigureAwait(false);
+                if (IsComplete)
+                    return;
+            }
+            finally
+            {
+                _stateGate.Release();
+            }
         }
+    }
+
+    /// <summary>Encodes a wire message and sends it as one or more MTU-safe datagrams (see <see cref="WirePacketizer"/>).</summary>
+    private async Task SendMessageAsync(object message, CancellationToken ct)
+    {
+        foreach (var datagram in WirePacketizer.Fragment(MessageCodec.Encode(message), _maxDatagramPayloadBytes))
+            await _transport.SendAsync(datagram, ct).ConfigureAwait(false);
     }
 
     /// <summary>Computes and sends CHUNK_REQUEST for any file's currently-missing chunks. Call this periodically (e.g. from a stall timer) while <see cref="RunAsync"/> is also running.</summary>
@@ -116,38 +155,48 @@ public sealed class ReceiverSession
         if (Manifest is null)
             return;
 
-        // Re-drive the content-key handshake until it succeeds: a single KEY_GRANT can be lost (it rides the
-        // lossy multicast data plane), and without the content key no ciphertext can be decrypted. Each retry
-        // prompts the sender to re-wrap and re-send. Cheap, and it reuses the caller's existing repair timer.
-        if (_contentKey is null)
+        // Held for the whole pass so it never observes _bitmaps/_contentKey/RepairCoordinator mid-mutation by
+        // the concurrent RunAsync packet loop (see _stateGate).
+        await _stateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            var join = new JoinRequestMessage(Manifest.Manifest.SessionId, _receiverId, _encryptionPublicKey);
-            await _transport.SendAsync(MessageCodec.Encode(join), cancellationToken).ConfigureAwait(false);
-        }
-
-        for (int fileIndex = 0; fileIndex < Manifest.Manifest.Files.Count; fileIndex++)
-        {
-            var bitmap = _bitmaps[fileIndex];
-            if (bitmap.IsComplete)
-                continue;
-
-            var missing = bitmap.MissingIndices().ToList();
-            var senderEndpoint = new Endpoint("sender", 0); // multicast-only MVP: Target is informational, delivery is always multicast
-            var plans = _repairCoordinator.PlanRepairs(fileIndex, missing, senderEndpoint, NewNonce);
-
-            foreach (var plan in plans)
+            // Re-drive the content-key handshake until it succeeds: a single KEY_GRANT can be lost (it rides the
+            // lossy multicast data plane), and without the content key no ciphertext can be decrypted. Each retry
+            // prompts the sender to re-wrap and re-send. Cheap, and it reuses the caller's existing repair timer.
+            if (_contentKey is null)
             {
-                var request = new ChunkRequestMessage(
-                    Manifest.Manifest.SessionId, _receiverId, plan.RequestNonce, fileIndex, plan.ChunkIndices, "", 0);
-                await _transport.SendAsync(MessageCodec.Encode(request), cancellationToken).ConfigureAwait(false);
+                var join = new JoinRequestMessage(Manifest.Manifest.SessionId, _receiverId, _encryptionPublicKey);
+                await SendMessageAsync(join, cancellationToken).ConfigureAwait(false);
             }
+
+            for (int fileIndex = 0; fileIndex < Manifest.Manifest.Files.Count; fileIndex++)
+            {
+                var bitmap = _bitmaps[fileIndex];
+                if (bitmap.IsComplete)
+                    continue;
+
+                var missing = bitmap.MissingIndices().ToList();
+                var senderEndpoint = new Endpoint("sender", 0); // multicast-only MVP: Target is informational, delivery is always multicast
+                var plans = _repairCoordinator.PlanRepairs(fileIndex, missing, senderEndpoint, NewNonce);
+
+                foreach (var plan in plans)
+                {
+                    var request = new ChunkRequestMessage(
+                        Manifest.Manifest.SessionId, _receiverId, plan.RequestNonce, fileIndex, plan.ChunkIndices, "", 0);
+                    await SendMessageAsync(request, cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+        finally
+        {
+            _stateGate.Release();
         }
     }
 
-    private async Task HandlePacketAsync(ReceivedPacket packet, CancellationToken ct)
+    private async Task HandlePacketAsync(byte[] payload, CancellationToken ct)
     {
         object? decoded;
-        try { decoded = MessageCodec.Decode(packet.Payload); }
+        try { decoded = MessageCodec.Decode(payload); }
         catch { return; }
 
         switch (decoded)
@@ -163,6 +212,9 @@ public sealed class ReceiverSession
                 break;
             case ChunkResponseMessage chunkResponse:
                 await HandleChunkAsync(chunkResponse.SessionId, chunkResponse.FileIndex, chunkResponse.ChunkIndex, chunkResponse.Payload, chunkResponse.Proof, ct).ConfigureAwait(false);
+                break;
+            case ChunkPacketMessage chunkPacket:
+                await HandleChunkPacketAsync(chunkPacket, ct).ConfigureAwait(false);
                 break;
             case PeerHaveMessage peerHave:
                 if (!peerHave.ReceiverId.AsSpan().SequenceEqual(_receiverId))
@@ -194,19 +246,27 @@ public sealed class ReceiverSession
         }
 
         Manifest = message.SignedManifest;
+        int maxChunkSize = 0;
         for (int fileIndex = 0; fileIndex < Manifest.Manifest.Files.Count; fileIndex++)
         {
             var file = Manifest.Manifest.Files[fileIndex];
             _bitmaps[fileIndex] = new ChunkBitmap(file.ChunkCount);
+            maxChunkSize = Math.Max(maxChunkSize, file.ChunkSize);
             var destination = PathSafety.ResolveDestination(_options.DestinationRoot, file.RelativePath);
             _sinks[fileIndex] = _sinkFactory(destination, file.Size);
         }
+
+        // Now that the trusted manifest tells us the largest legitimate chunk for this transfer, bound the chunk
+        // reassembler to that chunk size (+ AEAD tag) so a crafted ChunkPacket can never claim more ciphertext —
+        // or more packets — than a real chunk of this transfer would.
+        _chunkAssembler = new ChunkPacketAssembler(
+            ChunkPacketAssembler.CiphertextBoundForChunkSize(maxChunkSize));
 
         EmitProgress();
 
         // Now that the sender's manifest is trusted, request the per-transfer content key (ADR-0003).
         var join = new JoinRequestMessage(Manifest.Manifest.SessionId, _receiverId, _encryptionPublicKey);
-        await _transport.SendAsync(MessageCodec.Encode(join), ct).ConfigureAwait(false);
+        await SendMessageAsync(join, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -257,11 +317,39 @@ public sealed class ReceiverSession
         EmitProgress();
     }
 
+    /// <summary>
+    /// Buffers one wire packet of a large chunk (see <see cref="ChunkPacketAssembler"/>). Once every packet of
+    /// the chunk has arrived — accumulated across the carousel and any repair rounds — the reassembled
+    /// ciphertext is fed through the very same verify/decrypt/write path as a chunk that arrived whole.
+    /// </summary>
+    private async Task HandleChunkPacketAsync(ChunkPacketMessage packet, CancellationToken ct)
+    {
+        if (Manifest is null || !packet.SessionId.AsSpan().SequenceEqual(Manifest.Manifest.SessionId))
+            return;
+        // Validate the wire-supplied file/chunk indices before indexing anything: an out-of-range ChunkIndex would
+        // otherwise throw ArgumentOutOfRangeException out of ChunkBitmap.Get and fault the whole receive loop.
+        if (!_bitmaps.TryGetValue(packet.FileIndex, out var bitmap)
+            || packet.ChunkIndex < 0 || packet.ChunkIndex >= bitmap.ChunkCount
+            || bitmap.Get(packet.ChunkIndex))
+            return; // unknown file, out-of-range chunk, or one we already have — drop stray/duplicate/bad packets
+
+        var assembled = _chunkAssembler.Offer(packet);
+        if (assembled is not { } complete)
+            return; // still missing packets — the chunk stays "not received" until repair fills the gaps
+
+        _chunkAssembler.Forget(packet.FileIndex, packet.ChunkIndex);
+        await HandleChunkAsync(packet.SessionId, packet.FileIndex, packet.ChunkIndex, complete.Ciphertext, complete.Proof, ct).ConfigureAwait(false);
+    }
+
     private async Task HandleChunkAsync(byte[] sessionId, int fileIndex, int chunkIndex, byte[] ciphertext, MerkleProof proof, CancellationToken ct)
     {
         if (Manifest is null || !sessionId.AsSpan().SequenceEqual(Manifest.Manifest.SessionId))
             return;
-        if (!_bitmaps.TryGetValue(fileIndex, out var bitmap) || bitmap.Get(chunkIndex))
+        // Same guard for the whole-chunk paths (ChunkData / ChunkResponse): a wire-supplied chunkIndex out of the
+        // file's range must be dropped, not passed to ChunkBitmap.Get where it would throw and fault the loop.
+        if (!_bitmaps.TryGetValue(fileIndex, out var bitmap)
+            || chunkIndex < 0 || chunkIndex >= bitmap.ChunkCount
+            || bitmap.Get(chunkIndex))
             return;
 
         var file = Manifest.Manifest.Files[fileIndex];
@@ -316,9 +404,21 @@ public sealed class ReceiverSession
             if (!_chunkCache.TryGetValue((request.FileIndex, chunkIndex), out var cached))
                 continue; // we don't have it either — let someone else (or the sender) answer
 
+            // Relay large chunks as identity-keyed wire packets (byte-identical to the sender's), so a
+            // requester accumulates them across sources/rounds; small chunks go as a whole ChunkResponse.
+            if (ChunkPacketizer.RequiresPacketization(cached.Ciphertext.Length, cached.Proof, _maxDatagramPayloadBytes))
+            {
+                foreach (var packet in ChunkPacketizer.Split(
+                    Manifest.Manifest.SessionId, request.FileIndex, chunkIndex, cached.Ciphertext, cached.Proof, _maxDatagramPayloadBytes))
+                {
+                    await SendMessageAsync(packet, ct).ConfigureAwait(false);
+                }
+                continue;
+            }
+
             var response = new ChunkResponseMessage(
                 Manifest.Manifest.SessionId, request.RequestNonce, request.FileIndex, chunkIndex, cached.Ciphertext, cached.Proof);
-            await _transport.SendAsync(MessageCodec.Encode(response), ct).ConfigureAwait(false);
+            await SendMessageAsync(response, ct).ConfigureAwait(false);
         }
     }
 
@@ -326,7 +426,7 @@ public sealed class ReceiverSession
     {
         var message = new PeerHaveMessage(
             Manifest!.Manifest.SessionId, _receiverId, fileIndex, _bitmaps[fileIndex].ToBytes(), "", 0);
-        await _transport.SendAsync(MessageCodec.Encode(message), ct).ConfigureAwait(false);
+        await SendMessageAsync(message, ct).ConfigureAwait(false);
     }
 
     private static byte[] NewNonce() => Guid.NewGuid().ToByteArray();

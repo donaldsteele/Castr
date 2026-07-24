@@ -13,13 +13,17 @@ apps to reliably join true multicast groups.
 
 ## Status
 
-M0 (scaffolding), M1 (core protocol), M1.5 (payload encryption retrofit), and
-M2 (CLI, TUI, desktop GUI) are complete; M3 (test/CI hardening) is next. Chunk
-payloads are ChaCha20-Poly1305-encrypted end-to-end — see
-`wiki/synthesis/m1.5-encryption-summary.md` and `wiki/synthesis/adr-0003-payload-encryption.md`.
+M0 (scaffolding), M1 (core protocol), M1.5 (payload encryption retrofit),
+M2 (CLI, TUI, desktop GUI), and M3 (test/CI hardening) are complete; M4
+(mobile) is next. Chunk payloads are ChaCha20-Poly1305-encrypted end-to-end
+and travel over MTU-safe wire packets (chunks split/reassembled below the
+crypto layer) — see `wiki/synthesis/m1.5-encryption-summary.md` and
+`wiki/synthesis/m3-test-ci-hardening-summary.md`.
 `castr send`/`castr receive`/`castr trust`, a live Spectre.Console dashboard
 (`--tui`), and an Avalonia desktop GUI are all working — see
-`wiki/synthesis/m2-ui-summary.md`. See `wiki/synthesis/roadmap.md` for milestone status and
+`wiki/synthesis/m2-ui-summary.md`. CI runs a real 3-OS build+test matrix plus
+a Docker-gated multi-container E2E fan-out job with real induced packet loss —
+see `wiki/synthesis/m3-test-ci-hardening-summary.md`. See `wiki/synthesis/roadmap.md` for milestone status and
 `wiki/` generally for the accumulated design decisions (ADRs, spike results). The
 full architecture — wire protocol, repair algorithm, security model, and milestone
 plan — lives in the project plan; a synthesis of it is ingested into `wiki/` as the
@@ -38,8 +42,11 @@ project's first source so it survives session restarts.
 - `src/Castr.Gui`, `src/Castr.Gui.Desktop` — Avalonia GUI: shared
   views/viewmodels and the Windows/macOS/Linux desktop head; mobile heads
   (`Castr.Gui.Android`/`Castr.Gui.iOS`) are M4
-- `tests/` — unit, loopback-multicast integration, multi-container E2E, and CLI
-  test projects, one per corresponding `src/` project's concerns
+- `tests/` — unit, loopback-multicast integration, CLI, TUI, and GUI test
+  projects, one per corresponding `src/` project's concerns, plus
+  `Castr.Core.E2ETests`: a Testcontainers-driven multi-container fan-out suite
+  (real Docker bridge multicast + kernel-level `tc netem` loss), opt-in via
+  `CASTR_E2E=1` and gated on Docker being reachable
 - `wiki/`, `raw/` — the project's persistent knowledge base (llm-wiki), the
   durable memory across sessions
 - `graphify-out/` — generated codebase knowledge graph (query this instead of

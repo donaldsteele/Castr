@@ -102,6 +102,35 @@ public static class MessageCodec
                 WriteVarBytes(stream, m.WrappedContentKey);
                 break;
 
+            case PacketFragmentMessage m:
+                stream.WriteByte((byte)MessageType.PacketFragment);
+                WriteInt64(stream, m.GroupId);
+                WriteInt32(stream, m.PacketIndex);
+                WriteInt32(stream, m.PacketCount);
+                WriteInt32(stream, m.TotalLength);
+                WriteVarBytes(stream, m.Fragment);
+                break;
+
+            case ChunkPacketMessage m:
+                stream.WriteByte((byte)MessageType.ChunkPacket);
+                WriteFixed(stream, m.SessionId, SessionIdSize);
+                WriteInt32(stream, m.FileIndex);
+                WriteInt32(stream, m.ChunkIndex);
+                WriteInt32(stream, m.PacketIndex);
+                WriteInt32(stream, m.PacketCount);
+                WriteInt32(stream, m.CiphertextLength);
+                WriteVarBytes(stream, m.Fragment);
+                if (m.Proof is null)
+                {
+                    stream.WriteByte(0);
+                }
+                else
+                {
+                    stream.WriteByte(1);
+                    WriteMerkleProof(stream, m.Proof);
+                }
+                break;
+
             default:
                 throw new ArgumentException($"Unknown message type: {message.GetType()}", nameof(message));
         }
@@ -176,8 +205,30 @@ public static class MessageCodec
                 reader.ReadBytes(IdSize).ToArray(),
                 reader.ReadVarBytes()),
 
+            MessageType.PacketFragment => new PacketFragmentMessage(
+                reader.ReadInt64(),
+                reader.ReadInt32(),
+                reader.ReadInt32(),
+                reader.ReadInt32(),
+                reader.ReadVarBytes()),
+
+            MessageType.ChunkPacket => DecodeChunkPacketMessage(ref reader),
+
             _ => throw new InvalidDataException($"Unknown message type tag {(byte)type}."),
         };
+    }
+
+    private static ChunkPacketMessage DecodeChunkPacketMessage(ref SpanReader reader)
+    {
+        var sessionId = reader.ReadBytes(SessionIdSize).ToArray();
+        int fileIndex = reader.ReadInt32();
+        int chunkIndex = reader.ReadInt32();
+        int packetIndex = reader.ReadInt32();
+        int packetCount = reader.ReadInt32();
+        int ciphertextLength = reader.ReadInt32();
+        var fragment = reader.ReadVarBytes();
+        MerkleProof? proof = reader.ReadByte() == 1 ? reader.ReadMerkleProof() : null;
+        return new ChunkPacketMessage(sessionId, fileIndex, chunkIndex, packetIndex, packetCount, ciphertextLength, fragment, proof);
     }
 
     private static ManifestMessage DecodeManifestMessage(ref SpanReader reader)

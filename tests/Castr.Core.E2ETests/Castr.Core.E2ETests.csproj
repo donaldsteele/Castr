@@ -7,6 +7,13 @@
 
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+
+    <!--
+      This project drives the *shipped* `castr` binary inside real Docker containers (Testcontainers).
+      It is an opt-in, slow, Docker-dependent tier: every test is skipped unless the CASTR_E2E
+      environment variable is set (see Infrastructure/E2EFactAttribute.cs) AND Docker is reachable,
+      so a plain `dotnet test` on a machine without Docker neither hangs nor fails. See README.md.
+    -->
   </PropertyGroup>
 
   <ItemGroup>
@@ -14,6 +21,8 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
     <PackageReference Include="xunit" Version="2.5.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+    <PackageReference Include="Testcontainers" Version="4.13.0" />
+    <PackageReference Include="NSec.Cryptography" Version="26.4.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -21,8 +30,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Referenced only to generate an Ed25519 sender identity in-test (see SenderIdentityFactory);
+         the transfer itself is exercised entirely through the compiled `castr` CLI inside containers. -->
     <ProjectReference Include="..\..\src\Castr.Core\Castr.Core.csproj" />
-    <ProjectReference Include="..\..\src\Castr.Cli\Castr.Cli.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The Dockerfile is baked into the built test image at runtime; ship it with the build output. -->
+    <None Update="Docker\castr.Dockerfile" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

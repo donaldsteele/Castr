@@ -27,6 +27,11 @@ namespace Castr.Tui;
 /// </summary>
 public sealed class TransferDashboard
 {
+    /// <summary>How long the render loop will keep polling for the terminal <c>ProgressChanged</c> snapshot
+    /// after <c>isComplete()</c> first reports true, before giving up and rendering whatever it has. See the
+    /// comment at its use site in <see cref="RunLoopAsync"/> for why this gap can exist at all.</summary>
+    private static readonly TimeSpan CompletionConfirmationGrace = TimeSpan.FromSeconds(2);
+
     private readonly IAnsiConsole _console;
     private readonly TimeSpan _refreshInterval;
 
@@ -73,6 +78,7 @@ public sealed class TransferDashboard
         TransferProgress? latest = null;
         double rate = 0;
         var wake = new SemaphoreSlim(0);
+        DateTime? sessionCompleteObservedAt = null;
 
         void Handler(TransferProgress progress)
         {
@@ -97,17 +103,50 @@ public sealed class TransferDashboard
                             ctx.Refresh();
                         }
 
-                        bool done = cancellationToken.IsCancellationRequested
-                            || isComplete()
-                            || (snapshot?.IsComplete ?? false)
-                            || snapshot?.Phase == TransferPhase.TrustDenied;
-                        if (done)
+                        bool snapshotTerminal = (snapshot?.IsComplete ?? false) || snapshot?.Phase == TransferPhase.TrustDenied;
+                        if (snapshotTerminal || cancellationToken.IsCancellationRequested)
                         {
                             // One last frame so the final state (100% / denied) is what stays on screen.
                             var final = Volatile.Read(ref latest);
                             if (final is not null)
                             {
                                 ctx.UpdateTarget(TransferDashboardRenderer.Render(final, rate));
+                                ctx.Refresh();
+                            }
+                            return;
+                        }
+
+                        if (isComplete())
+                        {
+                            // The session already reports completion, but the terminal ProgressChanged event
+                            // that carries Phase.Completed (and thus IsComplete on the *snapshot*) is raised a
+                            // few statements after the underlying state actually flips (e.g. a receiver's
+                            // HandleChunkAsync still has a repair broadcast to send before it calls
+                            // EmitProgress). That gap is normally sub-microsecond and invisible, but if this
+                            // thread is preempted mid-gap — realistic under heavy scheduler contention, e.g.
+                            // many test projects' processes competing for CPU — another thread's isComplete()
+                            // read can observe "done" before the corresponding terminal snapshot lands. Give
+                            // that guaranteed-imminent event a brief, bounded chance to arrive rather than
+                            // freezing the display on a stale, pre-completion frame.
+                            sessionCompleteObservedAt ??= DateTime.UtcNow;
+                            if (DateTime.UtcNow - sessionCompleteObservedAt.Value < CompletionConfirmationGrace)
+                            {
+                                try
+                                {
+                                    await wake.WaitAsync(TimeSpan.FromMilliseconds(5), cancellationToken).ConfigureAwait(false);
+                                }
+                                catch (OperationCanceledException) { /* re-checked at loop top */ }
+                                continue;
+                            }
+
+                            // Grace period elapsed with no terminal snapshot ever arriving — this shouldn't
+                            // happen (every path that can make IsComplete true also raises a terminal
+                            // ProgressChanged shortly after), but render the best-known state and stop rather
+                            // than waiting forever, as a safety net for a genuine hang.
+                            var lastKnown = Volatile.Read(ref latest);
+                            if (lastKnown is not null)
+                            {
+                                ctx.UpdateTarget(TransferDashboardRenderer.Render(lastKnown, rate));
                                 ctx.Refresh();
                             }
                             return;

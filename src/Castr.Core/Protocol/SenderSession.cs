@@ -29,10 +29,12 @@ public sealed class SenderSession(
     IReadOnlyDictionary<int, MerkleTree> merkleTrees,
     IMulticastTransport transport,
     Key senderEncryptionKey,
-    ContentKey contentKey)
+    ContentKey contentKey,
+    int maxDatagramPayloadBytes = WirePacketizer.DefaultMaxDatagramPayload)
 {
     private readonly object _progressGate = new();
     private readonly HashSet<string> _grantedReceivers = [];
+    private readonly PacketReassembler _reassembler = new();
     private int _sentChunks;
     private long _sentBytes;
     private bool _carouselComplete;
@@ -63,11 +65,18 @@ public sealed class SenderSession(
         var announce = new AnnounceMessage(
             signedManifest.Manifest.SessionId, signedManifest.SenderPublicKey, digest,
             signedManifest.Manifest.TransferName, signedManifest.Manifest.IssuedAt);
-        await transport.SendAsync(MessageCodec.Encode(announce), ct).ConfigureAwait(false);
+        await SendMessageAsync(announce, ct).ConfigureAwait(false);
     }
 
     private async Task SendManifestAsync(CancellationToken ct) =>
-        await transport.SendAsync(MessageCodec.Encode(new ManifestMessage(signedManifest)), ct).ConfigureAwait(false);
+        await SendMessageAsync(new ManifestMessage(signedManifest), ct).ConfigureAwait(false);
+
+    /// <summary>Encodes a wire message and sends it as one or more MTU-safe datagrams (see <see cref="WirePacketizer"/>).</summary>
+    private async Task SendMessageAsync(object message, CancellationToken ct)
+    {
+        foreach (var datagram in WirePacketizer.Fragment(MessageCodec.Encode(message), maxDatagramPayloadBytes))
+            await transport.SendAsync(datagram, ct).ConfigureAwait(false);
+    }
 
     private async Task RunChunkCarouselAsync(CancellationToken ct)
     {
@@ -101,7 +110,11 @@ public sealed class SenderSession(
     {
         await foreach (var packet in transport.ReceiveAsync(ct).ConfigureAwait(false))
         {
-            switch (TryDecode(packet.Payload))
+            var payload = _reassembler.Offer(packet.Payload);
+            if (payload is null)
+                continue; // an incomplete fragment (or malformed datagram) — nothing to handle yet
+
+            switch (TryDecode(payload))
             {
                 case ChunkRequestMessage request:
                     await HandleChunkRequestAsync(request, ct).ConfigureAwait(false);
@@ -145,7 +158,7 @@ public sealed class SenderSession(
         }
 
         var grant = new KeyGrantMessage(signedManifest.Manifest.SessionId, join.ReceiverId, wrapped);
-        await transport.SendAsync(MessageCodec.Encode(grant), ct).ConfigureAwait(false);
+        await SendMessageAsync(grant, ct).ConfigureAwait(false);
 
         bool isNewReceiver;
         lock (_progressGate)
@@ -161,11 +174,24 @@ public sealed class SenderSession(
         var ciphertext = contentKey.EncryptChunk(signedManifest.Manifest.SessionId, fileIndex, chunkIndex, plaintext);
         var proof = tree.GetProof(chunkIndex);
 
+        // A chunk whose whole envelope fits in one datagram goes as a single ChunkDataMessage/ChunkResponseMessage
+        // (unchanged wire behavior). A larger chunk is split into identity-keyed ChunkPacketMessage wire packets
+        // (see ChunkPacketizer) so it stays MTU-safe and accumulates across repair rounds.
+        if (ChunkPacketizer.RequiresPacketization(ciphertext.Length, proof, maxDatagramPayloadBytes))
+        {
+            foreach (var packet in ChunkPacketizer.Split(
+                signedManifest.Manifest.SessionId, fileIndex, chunkIndex, ciphertext, proof, maxDatagramPayloadBytes))
+            {
+                await SendMessageAsync(packet, ct).ConfigureAwait(false);
+            }
+            return;
+        }
+
         object message = requestNonce is null
             ? new ChunkDataMessage(signedManifest.Manifest.SessionId, fileIndex, chunkIndex, ciphertext, proof)
             : new ChunkResponseMessage(signedManifest.Manifest.SessionId, requestNonce, fileIndex, chunkIndex, ciphertext, proof);
 
-        await transport.SendAsync(MessageCodec.Encode(message), ct).ConfigureAwait(false);
+        await SendMessageAsync(message, ct).ConfigureAwait(false);
     }
 
     private static object? TryDecode(byte[] payload)

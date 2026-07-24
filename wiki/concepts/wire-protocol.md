@@ -13,9 +13,9 @@ The message set and manifest design that lets [[castr-project]] send a file once
 
 ## Two-level chunking
 
-**Chunks** (256 KB–1 MB) are the hash/repair granularity. The design calls for each chunk to be split into **wire packets** (~1200 bytes, MTU-safe) for actual UDP datagrams, keeping the repair layer's chunk-index granularity (see [[repair-protocol]]) distinct from the transport layer's datagram granularity.
+**Chunks** (256 KB–1 MB) are the hash/repair granularity. Each chunk is split into **wire packets** (~1200 bytes, MTU-safe, configurable) for actual UDP datagrams, keeping the repair layer's chunk-index granularity (see [[repair-protocol]]) distinct from the transport layer's datagram granularity.
 
-**This split was never actually implemented in M1** — a gap that stayed latent until M2 built `Castr.Cli` against real UDP sockets instead of the in-memory test transport (see [[m2-ui-summary]]). `SenderSession` and the UDP transports put an entire encrypted chunk into a single datagram; any chunk whose ciphertext exceeds the practical UDP payload limit (~65507 bytes) fails a send outright and, worse, leaves an already-listening receiver hanging forever with a 0-byte `.part` file and no error. `Castr.Cli` mitigates this in M2 with an upfront fail-fast validation on `--chunk-size` (exit code 5, before any network activity starts), and all three M2 UI surfaces default to an 8 KB chunk size rather than the 256 KB documented here. **The 256 KB–1 MB range above is the target design, not yet a safe operating range** — actually implementing the wire-packet split is tracked as open work for M3.
+**Implemented in M3** — see [[m3-test-ci-hardening-summary]]. `ChunkPacketizer`/`ChunkPacketAssembler` slice a chunk's already-encrypted ciphertext into ordered, identity-keyed packets (`(fileIndex, chunkIndex, packetIndex)`, message tag 11); the Merkle inclusion proof rides only on packet 0. A separate, generic `WirePacketizer`/`PacketReassembler` (tag 10) handles fragmentation for oversized control messages (e.g. a large multi-file `MANIFEST`). Splitting happens *after* encryption and hashing, so packetization has zero interaction with the crypto/Merkle layers described below and in [[security-model]] — verified directly by tampering a single wire packet mid-transfer and confirming the existing Merkle-proof/AEAD-tag checks still catch it post-reassembly. A receiver accumulates a chunk's packets across repair rounds and across sources (the same deterministic slicing means a re-sent packet from the sender or a relaying peer is byte-identical to the original), which is what lets large chunks survive real packet loss rather than needing a single lossless round — proven with a 256 KB chunk completing byte-identically at 10% real per-packet UDP loss. At the documented 1200-byte default, even the 8 KB chunk size every M2 UI surface defaults to now packetizes (confirmed via traffic capture: largest observed datagram is exactly 1200 bytes, well under Ethernet's 1500-byte MTU) — the crash/hang bug M2 found and mitigated with a Cli-side `--chunk-size` guard is gone, and that guard has been removed in favor of a generous 16 MiB memory-safety ceiling on reassembly buffering.
 
 ## Message types
 
@@ -40,7 +40,9 @@ See [[adr-0003-payload-encryption]] for the full design. In short: chunk payload
 
 ## Replay protection
 
-Session ID = 16 random bytes, sender-generated per transfer, plus a freshness window on `issued-at`. Trust is keyed to the sender's Ed25519 public-key fingerprint, not the session ID, so replaying an old legitimate announce is low-severity — worst case is a redundant, hash-verified rewrite of a file the receiver already has.
+Session ID = 16 random bytes, sender-generated per transfer. Trust is keyed to the sender's Ed25519 public-key fingerprint, not the session ID, so replaying an old legitimate announce is low-severity — worst case is a redundant, hash-verified rewrite of a file the receiver already has.
+
+**Gap, confirmed during M3's security test pass (see [[m3-test-ci-hardening-summary]]): the freshness window on `issued-at` described in earlier design notes was never actually implemented.** `ReceiverSession` never inspects `IssuedAt` against the clock, and `ANNOUNCE` is currently ignored entirely. A test does confirm `IssuedAt` is covered by the manifest's Ed25519 signature (so a replayed manifest can't have its timestamp forged fresh), which anchors a future freshness check, but nothing enforces one today. Flagged as low severity for the reason above (fingerprint-keyed trust, not session/timestamp-keyed) rather than fixed silently in a test-only pass — revisit if session-replay risk is ever reassessed.
 
 ## Where this fits
 
@@ -50,3 +52,4 @@ Session ID = 16 random bytes, sender-generated per transfer, plus a freshness wi
 - [[adr-0003-payload-encryption]]
 - [[m1.5-encryption-summary]]
 - [[m2-ui-summary]]
+- [[m3-test-ci-hardening-summary]]

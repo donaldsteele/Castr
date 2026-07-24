@@ -66,4 +66,33 @@ public class TrustStoreJsonCodecTests
 
         Assert.Throws<InvalidDataException>(() => TrustStoreJsonCodec.Decode(json));
     }
+
+    [Fact]
+    public void Decode_MalformedJson_Throws_DoesNotSilentlyReturnEmpty()
+    {
+        // A corrupted/truncated trust store must fail loudly. Silently decoding to an empty store would
+        // quietly drop previously-BLOCKED senders back to "unknown" — a fail-open downgrade.
+        Assert.ThrowsAny<Exception>(() => TrustStoreJsonCodec.Decode("{ this is not valid json"));
+    }
+
+    [Fact]
+    public void Decode_EntryMissingPublicKeyId_Throws()
+    {
+        const string json = """{"version":1,"entries":[{"displayName":"x","status":"trusted","addedAt":"2026-01-01T00:00:00Z","source":"manual"}]}""";
+
+        Assert.Throws<InvalidDataException>(() => TrustStoreJsonCodec.Decode(json));
+    }
+
+    [Fact]
+    public void Decode_MalformedPublicKeyId_IsInert_CannotAuthorizeARealSender()
+    {
+        // Hand-editing a bogus (non-ed25519) key id in as "trusted" doesn't crash decoding, but such an entry
+        // can never match a genuine sender: every real sender id is a valid "ed25519:<base64>" string.
+        const string json = """{"version":1,"entries":[{"publicKeyId":"totally-bogus","displayName":"x","status":"trusted","addedAt":"2026-01-01T00:00:00Z","source":"manual"}]}""";
+
+        var entries = TrustStoreJsonCodec.Decode(json);
+
+        Assert.Single(entries);
+        Assert.Throws<FormatException>(() => entries[0].PublicKeyId.ToRawEd25519());
+    }
 }

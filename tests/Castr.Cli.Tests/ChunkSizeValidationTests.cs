@@ -5,11 +5,10 @@ using Spectre.Console.Testing;
 namespace Castr.Cli.Tests;
 
 /// <summary>
-/// Covers the M2-QA-recommended fail-fast validation of <c>--chunk-size</c> in <see cref="SendRunner"/>: the
-/// M1 UDP transport puts one whole encrypted chunk into a single datagram (no packetization, tracked for M3),
-/// so a chunk size whose ciphertext would exceed the safe UDP payload ceiling must be rejected upfront,
-/// before any file, socket, or session state is touched — otherwise a sender that somehow got an oversized
-/// chunk onto the wire leaves a listening receiver hanging forever with no timeout.
+/// Covers the fail-fast validation of <c>--chunk-size</c> in <see cref="SendRunner"/>. As of M3, Castr.Core
+/// packetizes each encrypted chunk into MTU-safe wire packets, so the old ~65 KB single-datagram ceiling is
+/// gone; the remaining cap (<see cref="CastrPaths.MaxChunkSize"/>) is a memory-safety bound on chunk
+/// reassembly. The check still runs upfront, before any file, socket, or session state is touched.
 /// </summary>
 public class ChunkSizeValidationTests : IDisposable
 {
@@ -61,6 +60,24 @@ public class ChunkSizeValidationTests : IDisposable
     }
 
     [Fact]
+    public async Task DocumentedLargeChunkSize_IsNowAccepted()
+    {
+        // 256 KB is the documented default hash/repair chunk size (wiki/concepts/wire-protocol.md) and was
+        // rejected outright pre-M3. Packetization makes it safe again, so it must now clear the gate.
+        var srcPath = Path.Combine(_dir, "payload.bin");
+        await File.WriteAllBytesAsync(srcPath, new byte[1024]);
+        var identityPath = Path.Combine(_dir, "identity.key");
+
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        var exit = await SendRunner.RunAsync(
+            Options(srcPath, 262_144, identityPath), new TestConsole(), cts.Token);
+
+        Assert.Equal(ExitCodes.Success, exit); // cancellation, not InvalidInput => it cleared the chunk-size gate
+    }
+
+    [Fact]
     public async Task ChunkSizeOverMax_IsRejected_WithExitCode5AndLimitMessage()
     {
         // A nonexistent source file and identity path: if validation ran after any real work, later steps
@@ -68,13 +85,13 @@ public class ChunkSizeValidationTests : IDisposable
         var srcPath = Path.Combine(_dir, "does-not-exist.bin");
         var identityPath = Path.Combine(_dir, "identity.key");
         var console = new TestConsole();
+        int overMax = CastrPaths.MaxChunkSize + 1_000_000;
 
         var exit = await SendRunner.RunAsync(
-            Options(srcPath, 262_144, identityPath), console, CancellationToken.None);
+            Options(srcPath, overMax, identityPath), console, CancellationToken.None);
 
         Assert.Equal(ExitCodes.InvalidInput, exit);
-        Assert.Contains("262144", console.Output);
-        Assert.Contains(CastrPaths.MaxSafeUdpPayloadBytes.ToString(), console.Output);
+        Assert.Contains(overMax.ToString(), console.Output);
         Assert.Contains(CastrPaths.MaxChunkSize.ToString(), console.Output);
     }
 
