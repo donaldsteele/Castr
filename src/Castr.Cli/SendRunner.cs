@@ -1,5 +1,6 @@
 using System.Net;
 using Spectre.Console;
+using Castr.Core.Protocol;
 using Castr.Core.Transport;
 using Castr.Core.Transport.Udp;
 using Castr.Tui;
@@ -14,7 +15,8 @@ internal sealed record SendOptions(
     int ChunkSize,
     string IdentityPath,
     bool UseTui,
-    bool MulticastLoopback = true);
+    bool MulticastLoopback = true,
+    int SendWindowSize = SenderSession.DefaultSendWindowSize);
 
 /// <summary>
 /// Drives one real <see cref="Castr.Core.Protocol.SenderSession"/> over UDP multicast. Factored out of the
@@ -38,6 +40,12 @@ internal static class SendRunner
         if (!File.Exists(options.FilePath))
         {
             console.MarkupLineInterpolated($"[red]File not found:[/] {options.FilePath}");
+            return ExitCodes.InvalidInput;
+        }
+
+        if (options.SendWindowSize < 1)
+        {
+            console.MarkupLineInterpolated($"[red]--send-window-size must be at least 1.[/]");
             return ExitCodes.InvalidInput;
         }
 
@@ -69,7 +77,7 @@ internal static class SendRunner
 
             await using IMulticastTransport transport =
                 new UdpMulticastTransport(options.Group, options.Port, interfaceAddress, options.MulticastLoopback);
-            var session = prepared.CreateSession(transport);
+            var session = prepared.CreateSession(transport, options.SendWindowSize);
 
             if (options.UseTui)
             {

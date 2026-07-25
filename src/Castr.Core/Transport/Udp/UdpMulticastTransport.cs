@@ -1,6 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.CompilerServices;
+using System.Threading.Channels;
 
 namespace Castr.Core.Transport.Udp;
 
@@ -13,9 +13,36 @@ namespace Castr.Core.Transport.Udp;
 /// </summary>
 public sealed class UdpMulticastTransport : IMulticastTransport
 {
+    /// <summary>
+    /// Explicit OS socket buffer size (both directions), set in the constructor rather than left at the
+    /// platform default (which can be as low as ~256 KB on Linux/macOS/BSD). Chosen for the same reason
+    /// mature UDP multicast implementations (e.g. uftp-multicast, github.com/digarok/uftp-multicast) treat
+    /// <c>SO_RCVBUF</c>/<c>SO_SNDBUF</c> sizing as a primary throughput lever: a bigger kernel-level buffer
+    /// gives a receiver's decode/verify/write chain more slack to fall behind a burst without the OS silently
+    /// dropping datagrams. This is complementary to, not a substitute for, <see cref="ReceiveLoopAsync"/>'s
+    /// channel-based decoupling below — a bigger buffer only delays the same overflow if the consumer stays
+    /// slower than the arrival rate; the real fix is draining the socket independently of how slow downstream
+    /// processing is. See the M6 write-up in wiki/synthesis/roadmap.md for the measurements behind both.
+    /// Best-effort: some platforms silently clamp this to a lower ceiling (e.g. Linux's <c>net.core.rmem_max</c>)
+    /// rather than erroring, so no particular value is guaranteed to take effect.
+    /// </summary>
+    public const int SocketBufferBytes = 4 * 1024 * 1024;
+
+    /// <summary>
+    /// Capacity of the internal channel <see cref="ReceiveLoopAsync"/> feeds and <see cref="ReceiveAsync"/>
+    /// drains. Bounded (not unbounded) so a consumer that falls arbitrarily far behind can't grow this queue
+    /// without limit; sized well above <see cref="PacketReassembler"/>'s/<see cref="ChunkPacketAssembler"/>'s
+    /// own 1024-group caps as a second, cheaper-to-drain layer of slack in front of them.
+    /// </summary>
+    public const int InboxCapacity = 4096;
+
     private readonly Socket _socket;
     private readonly IPEndPoint _groupEndpoint;
     private readonly EndPoint _receiveTemplate = new IPEndPoint(IPAddress.Any, 0);
+    private readonly Channel<ReceivedPacket> _inbox;
+    private readonly CancellationTokenSource _readerCts = new();
+    private readonly Task _readerLoopTask;
+    private bool _disposed;
 
     public UdpMulticastTransport(
         IPAddress groupAddress, int port, IPAddress? interfaceAddress = null, bool multicastLoopback = true, short timeToLive = 1)
@@ -27,6 +54,11 @@ public sealed class UdpMulticastTransport : IMulticastTransport
 
         _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         _socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+        // Best-effort: the OS may clamp these below SocketBufferBytes rather than throw, so failures here are
+        // swallowed rather than treated as fatal — a transport that can't get a bigger buffer should still work,
+        // just with less slack against bursts (see SocketBufferBytes's doc comment).
+        TrySetSocketOption(SocketOptionName.ReceiveBuffer, SocketBufferBytes);
+        TrySetSocketOption(SocketOptionName.SendBuffer, SocketBufferBytes);
         _socket.Bind(new IPEndPoint(IPAddress.Any, port));
 
         _socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastLoopback, multicastLoopback);
@@ -67,20 +99,67 @@ public sealed class UdpMulticastTransport : IMulticastTransport
             _socket.SetSocketOption(
                 SocketOptionLevel.IP, SocketOptionName.MulticastInterface, sendInterface.GetAddressBytes());
         }
+
+        // Decouple draining the OS socket from however slow a consumer's own processing chain is (decode,
+        // Merkle/AEAD verify, disk write, outbound PEER_HAVE broadcast — see ReceiverSession.HandlePacketAsync).
+        // Before this, ReceiveAsync's own await-foreach *was* the read loop: the next socket read was never
+        // issued until the caller finished fully handling the previous packet, so the kernel receive buffer
+        // only drained as fast as that whole chain ran. Now a dedicated tight loop (ReceiveLoopAsync) does
+        // nothing but pull datagrams off the socket into this bounded channel; ReceiveAsync just enumerates the
+        // channel, at whatever pace the caller can manage. See the M6 write-up in wiki/synthesis/roadmap.md.
+        _inbox = Channel.CreateBounded<ReceivedPacket>(new BoundedChannelOptions(InboxCapacity)
+        {
+            SingleWriter = true, // only ReceiveLoopAsync ever writes
+            SingleReader = true, // only one logical consumer per transport instance in this codebase
+        });
+        _readerLoopTask = Task.Run(() => ReceiveLoopAsync(_readerCts.Token));
     }
 
     public async ValueTask SendAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken = default) =>
         await _socket.SendToAsync(payload, SocketFlags.None, _groupEndpoint, cancellationToken).ConfigureAwait(false);
 
-    public async IAsyncEnumerable<ReceivedPacket> ReceiveAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+    /// <summary>Enumerates packets already drained off the socket by <see cref="ReceiveLoopAsync"/>. Cancelling <paramref name="cancellationToken"/> only stops this particular enumeration — the underlying socket-reader loop keeps running (draining the socket, buffering into the channel) until the transport itself is disposed.</summary>
+    public IAsyncEnumerable<ReceivedPacket> ReceiveAsync(CancellationToken cancellationToken = default) =>
+        _inbox.Reader.ReadAllAsync(cancellationToken);
+
+    /// <summary>
+    /// Runs for the transport's whole lifetime (started in the constructor, stopped in <see cref="DisposeAsync"/>):
+    /// pulls datagrams off the socket as fast as the OS delivers them and writes each into <see cref="_inbox"/>,
+    /// with no per-packet processing in between. This is the producer half of the producer/consumer split
+    /// described on <see cref="_inbox"/>'s construction above.
+    /// </summary>
+    private async Task ReceiveLoopAsync(CancellationToken cancellationToken)
     {
         var buffer = new byte[65_507]; // max theoretical UDP/IPv4 payload
-        while (!cancellationToken.IsCancellationRequested)
+        try
         {
-            var received = await TryReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
-            if (received is null)
-                yield break;
-            yield return received;
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var received = await TryReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
+                if (received is null)
+                    break; // socket cancelled/disposed/reset — shutting down
+                // TryReceiveAsync already copies the received bytes into ReceivedPacket's own array (see its
+                // body below), so `buffer` itself is safe to reuse for the next datagram — no allocation here.
+                await _inbox.Writer.WriteAsync(received, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // normal shutdown (DisposeAsync cancelled us, or the bounded channel's WriteAsync observed cancellation)
+        }
+        catch (Exception ex)
+        {
+            // A genuine, unexpected fault in this loop itself (not cancellation, and not one of the
+            // socket-teardown cases TryReceiveAsync already turns into a clean "end the loop" null). Complete
+            // the channel WITH the exception so it surfaces to whoever is enumerating ReceiveAsync via
+            // ReadAllAsync, instead of being silently absorbed here and looking like an ordinary end-of-stream.
+            _inbox.Writer.TryComplete(ex);
+        }
+        finally
+        {
+            // No-op if the catch above already completed the channel (with or without an error) — TryComplete
+            // only succeeds once; this is just the normal-path completion for the common shutdown case.
+            _inbox.Writer.TryComplete();
         }
     }
 
@@ -93,14 +172,37 @@ public sealed class UdpMulticastTransport : IMulticastTransport
         }
         catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or SocketException)
         {
-            // Cancellation, or the socket being torn down / reset during shutdown — end the stream, don't throw through the caller's enumeration.
+            // Cancellation, or the socket being torn down / reset during shutdown — end the loop, don't throw through it.
             return null;
         }
     }
 
-    public ValueTask DisposeAsync()
+    /// <summary>Best-effort socket option set: some platforms/kernels clamp or reject a requested buffer size rather than honoring it exactly, and that should never prevent constructing the transport.</summary>
+    private void TrySetSocketOption(SocketOptionName option, int value)
     {
-        _socket.Dispose();
-        return ValueTask.CompletedTask;
+        try { _socket.SetSocketOption(SocketOptionLevel.Socket, option, value); }
+        catch (SocketException) { /* best-effort — proceed with whatever buffer size the OS gives us */ }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        // IAsyncDisposable.DisposeAsync is conventionally expected to tolerate repeated calls (the pre-round-2
+        // version — just _socket.Dispose() — was naturally idempotent; the sibling UdpUnicastTransport still
+        // is). _readerCts.Dispose() below means a second call would otherwise throw ObjectDisposedException at
+        // _readerCts.Cancel(), so guard re-entry explicitly.
+        if (_disposed)
+            return;
+        _disposed = true;
+
+        _readerCts.Cancel();
+        _socket.Dispose(); // unblocks a pending ReceiveFromAsync immediately (caught as ObjectDisposedException in TryReceiveAsync)
+        try { await _readerLoopTask.ConfigureAwait(false); }
+        catch
+        {
+            // ReceiveLoopAsync's own try/catch/finally already handles every shutdown path (cancellation,
+            // socket disposal, channel completion) without rethrowing; this is just a safety net so a disposed
+            // transport never faults the caller's shutdown sequence.
+        }
+        _readerCts.Dispose();
     }
 }
