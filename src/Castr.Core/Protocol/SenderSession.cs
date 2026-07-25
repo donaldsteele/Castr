@@ -31,11 +31,44 @@ public sealed class SenderSession(
     IMulticastTransport transport,
     Key senderEncryptionKey,
     ContentKey contentKey,
-    int maxDatagramPayloadBytes = WirePacketizer.DefaultMaxDatagramPayload)
+    int maxDatagramPayloadBytes = WirePacketizer.DefaultMaxDatagramPayload,
+    int sendWindowSize = SenderSession.DefaultSendWindowSize)
 {
+    /// <summary>
+    /// Default bound on concurrent in-flight <c>transport.SendAsync</c> calls for the chunk carousel and
+    /// chunk-repair batches (see <see cref="RunChunkCarouselAsync"/> and <see cref="HandleChunkRequestAsync"/>).
+    ///
+    /// This value is a deliberately conservative, evidence-based compromise, not a proven optimum — see the
+    /// M6 write-up in wiki/synthesis/roadmap.md for the full benchmark data. Two real-socket loopback-UDP
+    /// benchmarks (an in-process harness and, more importantly, real separate <c>castr send</c>/<c>castr
+    /// receive</c> processes matching actual CLI usage) both showed the *same* non-obvious shape: throughput
+    /// does **not** monotonically improve with more concurrency. A window of 1-2 is roughly neutral-to-positive
+    /// (occasionally ~1.8x faster, occasionally a wash, rarely a bit worse); a window of 3-4 is a consistent,
+    /// significant regression (2-5x *slower*); and a window in the tens (64 was the first value tried) can
+    /// make an 80 MB transfer effectively stall — the sender finishes its whole carousel while the receiver is
+    /// still under 40% complete, because per-chunk repair recovery (5s default retry timeout) is far more
+    /// expensive than the syscall overhead this change set out to remove.
+    ///
+    /// The likely mechanism: the old fully-sequential send loop was accidentally providing flow control — each
+    /// awaited send's own latency naturally paced packet emission to roughly what <see cref="ReceiverSession"/>'s
+    /// single-threaded receive loop can synchronously decode/verify/write. Concurrent sending removes that
+    /// accidental pacing; past a small window the sender can emit faster than the receiver drains, overflowing
+    /// the OS UDP receive buffer, and a single dropped packet stalls its whole chunk until repair recovers it.
+    /// A larger safe window likely requires either a faster/parallel receive path or explicit congestion
+    /// awareness on the send side — both out of scope for this change (send-path-only, no protocol changes).
+    ///
+    /// Given a real, measured downside (not just an unproven upside) at this exact default on the CLI's own
+    /// default chunk size, this default deserves a second opinion before being trusted as "correct" — see the
+    /// M6 write-up for the full trial-by-trial numbers.
+    /// </summary>
+    public const int DefaultSendWindowSize = 2;
+
     private readonly object _progressGate = new();
     private readonly HashSet<string> _grantedReceivers = [];
     private readonly PacketReassembler _reassembler = new();
+    private readonly int _sendWindowSize = sendWindowSize > 0
+        ? sendWindowSize
+        : throw new ArgumentOutOfRangeException(nameof(sendWindowSize), "Send window size must be positive.");
     private int _sentChunks;
     private long _sentBytes;
     private bool _carouselComplete;
@@ -79,18 +112,36 @@ public sealed class SenderSession(
             await transport.SendAsync(datagram, ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Sends every chunk of every file with up to <see cref="_sendWindowSize"/> chunk-sends in flight
+    /// concurrently, instead of one sequential <c>await</c> per wire packet. In isolation, that fully
+    /// sequential form measurably wastes time on per-await/per-syscall overhead rather than network bandwidth;
+    /// see <see cref="DefaultSendWindowSize"/>'s doc comment for why the right window size in practice is a
+    /// real engineering tradeoff, not "bigger is always better" — real-socket measurements found a narrow safe
+    /// range and a sharp cliff into much *worse* throughput past it. Concurrent sends necessarily complete (and
+    /// thus hit the wire) out of strict chunk-index order; that is safe here because the wire protocol was
+    /// already designed for arbitrary UDP reordering — <see cref="PacketReassembler"/> and
+    /// <see cref="ChunkPacketAssembler"/> on the receive side reassemble purely by (file, chunk, packet) index,
+    /// never by arrival order — so this only makes reordering (which a receiver already had to tolerate) more
+    /// likely, not a new class of failure. <see cref="Parallel.ForEachAsync{TSource}(IEnumerable{TSource},ParallelOptions,Func{TSource,CancellationToken,ValueTask})"/>
+    /// also gives correct-by-construction cancellation (stops scheduling new sends and propagates
+    /// <see cref="OperationCanceledException"/>) and fail-fast error propagation (an exception from
+    /// <c>transport.SendAsync</c>, e.g. a too-large-datagram <see cref="System.Net.Sockets.SocketException"/>,
+    /// stops the loop and rethrows — it is never swallowed).
+    /// </summary>
     private async Task RunChunkCarouselAsync(CancellationToken ct)
     {
+        var sendOptions = new ParallelOptions { MaxDegreeOfParallelism = _sendWindowSize, CancellationToken = ct };
+
         for (int fileIndex = 0; fileIndex < signedManifest.Manifest.Files.Count; fileIndex++)
         {
             var file = signedManifest.Manifest.Files[fileIndex];
             var source = fileSources[fileIndex];
             var tree = merkleTrees[fileIndex];
 
-            for (int chunkIndex = 0; chunkIndex < file.ChunkCount; chunkIndex++)
+            await Parallel.ForEachAsync(Enumerable.Range(0, file.ChunkCount), sendOptions, async (chunkIndex, token) =>
             {
-                ct.ThrowIfCancellationRequested();
-                await SendChunkAsync(fileIndex, chunkIndex, source, tree, requestNonce: null, ct).ConfigureAwait(false);
+                await SendChunkAsync(fileIndex, chunkIndex, source, tree, requestNonce: null, token).ConfigureAwait(false);
 
                 int chunkLength = ChunkLayout.GetRange(file.Size, file.ChunkSize, chunkIndex).Length;
                 lock (_progressGate)
@@ -99,7 +150,7 @@ public sealed class SenderSession(
                     _sentBytes += chunkLength;
                 }
                 EmitProgress(TransferPhase.Transferring);
-            }
+            }).ConfigureAwait(false);
         }
 
         lock (_progressGate)
@@ -134,8 +185,14 @@ public sealed class SenderSession(
         if (!fileSources.TryGetValue(request.FileIndex, out var source) || !merkleTrees.TryGetValue(request.FileIndex, out var tree))
             return;
 
-        foreach (var chunkIndex in request.ChunkIndices)
-            await SendChunkAsync(request.FileIndex, chunkIndex, source, tree, request.RequestNonce, ct).ConfigureAwait(false);
+        // Same windowed-concurrency rationale as RunChunkCarouselAsync: a bulk cold-start repair batch can
+        // legitimately span many thousands of chunk indices (see ChunkRequestMessage's UInt32 count widening,
+        // wiki/synthesis/m1-core-summary.md), so this benefits from the same pipelining rather than one
+        // sequential await per requested chunk.
+        var sendOptions = new ParallelOptions { MaxDegreeOfParallelism = _sendWindowSize, CancellationToken = ct };
+        await Parallel.ForEachAsync(request.ChunkIndices, sendOptions, async (chunkIndex, token) =>
+            await SendChunkAsync(request.FileIndex, chunkIndex, source, tree, request.RequestNonce, token).ConfigureAwait(false))
+            .ConfigureAwait(false);
     }
 
     private async Task HandleJoinRequestAsync(JoinRequestMessage join, CancellationToken ct)
