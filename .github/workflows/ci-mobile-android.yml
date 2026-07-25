@@ -46,13 +46,14 @@ jobs:
         with:
           global-json-file: global.json
 
-      # The net10.0-android TFM needs the `android` workload. The `ios` workload is ALSO required here — not
-      # to build iOS, but because this project references Castr.Core.Discovery, whose CastrMobileTargets=true
-      # multi-targeting includes net10.0-ios; a graph RESTORE evaluates every TFM (including ios) and fails
-      # workload resolution (NETSDK1178) if the ios workload manifest is absent, even though only the android
-      # TFM is ever compiled here. Installing both keeps restore happy without ever linking an iOS build.
-      - name: Install .NET mobile workloads
-        run: dotnet workload install android ios
+      # Only the `android` workload is installed. The `ios` workload deliberately is NOT — it cannot be
+      # installed on Linux at all ("Workload ID ios isn't supported on this platform"). This build never needs
+      # it: the Android head's ProjectReference to Castr.Core.Discovery scopes that reference to Discovery's
+      # net10.0-android TFM only (via AdditionalProperties), so Discovery's net10.0-ios TFM is never evaluated
+      # or restored here. We also do NOT pass CastrMobileTargets globally, which would otherwise flow into
+      # Castr.Gui's own Discovery reference and pull the ios TFM back into the graph restore.
+      - name: Install .NET Android workload
+        run: dotnet workload install android
 
       # Let .NET Android provision the exact SDK platform/build-tools its target API needs, using the JDK +
       # ANDROID_HOME set up above (avoids guessing API/build-tools versions by hand).
@@ -61,17 +62,15 @@ jobs:
           dotnet build src/Castr.Gui.Android/Castr.Gui.Android.csproj
           -t:InstallAndroidDependencies
           -f net10.0-android
-          -p:CastrMobileTargets=true
           -p:AcceptAndroidSdkLicenses=True
 
-      # The deliverable: the Android head compiles for net10.0-android. CastrMobileTargets=true flows to the
-      # referenced Castr.Core.Discovery so its net10.0-android head (the real NsdManager impl) is built too.
+      # The deliverable: the Android head compiles for net10.0-android. Its Discovery reference resolves the
+      # net10.0-android head of that library (the real NsdManager-backed NsdServiceDiscovery).
       - name: Build Castr.Gui.Android (Release)
         run: >
           dotnet build src/Castr.Gui.Android/Castr.Gui.Android.csproj
           -c Release
           -f net10.0-android
-          -p:CastrMobileTargets=true
 
       # Produce a sideloadable APK artifact. NOTE: this is DEBUG-SIGNED (the SDK's default debug keystore),
       # a CI-convenience / sideload artifact only — NOT a Play-Store-ready signed release. Proper release
@@ -81,7 +80,6 @@ jobs:
           dotnet publish src/Castr.Gui.Android/Castr.Gui.Android.csproj
           -c Release
           -f net10.0-android
-          -p:CastrMobileTargets=true
           -o ${{ github.workspace }}/artifacts/android
 
       - name: Upload APK artifact
