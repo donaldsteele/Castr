@@ -168,16 +168,158 @@ measured gain tracks the gossip collapse far better than the datagram-count chan
 
 ---
 
-## Pending
+---
 
-A live instrumentation run is in progress to measure the things every round of M6 left
-unmeasured, because they are the ones that distinguish the remaining candidate causes:
+## 2026-07-25 — Instrumented measurement campaign (91 real transfers)
 
-- **Throughput as a time series**, not an average — to characterise the burst/stall period and amplitude.
-- **Sender `_inbox` high-water mark** and count of its own multicast echo received and discarded.
-- **`CHUNK_REQUEST` messages sent by the receiver vs. actually received by the sender** — the delta
-  measures repair requests lost to congestion.
-- **Duplicate-chunk ratio** — how many times the file is actually transmitted.
-- **Per-stage receiver CPU** (Merkle verify / AEAD decrypt / disk write / `PEER_HAVE` send) under `_stateGate`.
+80 MB payload, `castr send` / `castr receive` as separate processes over loopback multicast.
+Windows 11, 12 logical cores, .NET 10.0.302, Release. Every run SHA-256 verified byte-identical
+unless noted. **All A/B rows warm-cache, interleaved, median of 3 reps.**
 
-Results will be appended here as a new dated section rather than editing the rows above.
+This section supersedes several derived estimates above. Where it contradicts them, it wins.
+
+### ⚠️ Read this first: the OS page cache is a ~2× confounder
+
+Identical configuration, identical datagram counts: **12.6 s cold vs 6.5 s warm (1.94×)**.
+`SendToAsync` went 29 → 53 µs/datagram and chunk read 32 → 57 µs when cold. This is very likely
+why M6 recorded ~8 MB/s where warm runs here show 13.6 MB/s. **Any A/B not run warm, interleaved,
+with ≥3 reps is noise.** Cache state was verified via `\Memory\Standby Cache Normal Priority Bytes`
+(2,229 MB → 15 MB on eviction).
+
+Also: **`netstat -s -p udp` "Receive Errors" read 0 in all 91 runs** despite 200,000–370,000
+demonstrably dropped datagrams. Windows does not report `SO_RCVBUF` overflow there. Do not use it.
+
+Requested `SO_RCVBUF`/`SO_SNDBUF` of 4,194,304 was **granted exactly — no clamping** (honored up to 64 MB).
+
+### The stall is 5.10 s, and it is `RepairOptions.RequestTimeout`
+
+Successive repair bursts are spaced **5,091–5,210 ms** (median 5,102 ms, n=40+). Never near 250 ms.
+The 250 ms poll runs 61–69 passes per transfer but **only 4 ever emit a request**, because
+`PlanRepairs` filters anything already in `_pending` and `ExpireStalePending` releases only after
+5 s. The loop sets granularity; the 5 s timeout sets the period.
+
+Amplitude is not a dip — it is **0.00 MB/s to 39 MB/s and back**. Dead air where the receiver made
+literally zero progress:
+
+| Config | Stalls | Total dead air | % of transfer |
+|---|---|---|---|
+| base (window 1) | 1 | 0.2–0.9 s | 3–15% |
+| `--send-window-size 2` | 1 | 1.6–2.5 s | 24–37% |
+| `--send-window-size 4` | 3 | **11.1–11.7 s** | **70%** |
+| datagram 8000 | 1 | 2.8–3.4 s | 47–57% |
+| repair disabled | 0 | 0 | 0% |
+| chunk 256K + datagram 60000 | 0 | 0 | 0% |
+
+A second, distinct **~600 ms sender-side oscillation** appears only cold (hard on/off square wave,
+sender at 0% CPU during the off phase; period 599/500/406 ms at window 1/2/4). A
+256 KB→64 MB `SO_SNDBUF` sweep did not move it — **refuted** as a buffer effect. It vanishes warm,
+so it is sender I/O/scheduling, not protocol.
+
+### A/B matrix
+
+| Config | sec | MB/s | vs base | carousel | tail | wire | amp | dup% | inbox peak |
+|---|---|---|---|---|---|---|---|---|---|
+| **base** (chunk 8192, w1, dgram 1200) | 5.86 | **13.65** | — | 4.76 | 0.97 | 201.2 MB | 2.52× | 43.3% | 4096 |
+| PEER_HAVE off | 4.90 | 16.33 | **+20%** | 4.90 | 0.00 | 176.8 MB | 2.21× | 48.1% | 4096 |
+| PEER_HAVE every 64th | 4.82 | 16.59 | **+22%** | 4.84 | 0.00 | 179.6 MB | 2.25× | 49.5% | 3016 |
+| repair off | 6.60 | 12.12 | **−11%** | 6.60 | 0.00 | 103.3 MB | 1.29× | 0.0% | 998 |
+| repair off + PEER_HAVE off | 6.28 | 12.74 | −7% | 6.28 | 0.00 | 89.8 MB | 1.12× | 0.0% | 824 |
+| repair loop 2 s (not 250 ms) | 5.50 | 14.54 | +6% | 5.52 | 0.00 | 165.7 MB | 2.07× | 40.5% | 3069 |
+| `--send-window-size 2` | 6.70 | 11.93 | **−13%** | 2.88 | **3.82** | 231.8 MB | 2.90× | 15.7% | 4096 |
+| `--send-window-size 4` | 15.85 | 5.05 | **−63%** | 1.83 | **14.00** | 309.7 MB | 3.87× | 3.6% | 4096 |
+| datagram 8000 | 5.96 | 13.43 | −2% | 1.47 | **4.49** | 214.8 MB | 2.68× | 17.5% | 4096 |
+| **chunk 256K** (dgram 1200) | 3.32 | **24.10** | **+77%** | 3.37 | 0.00 | 164.4 MB | 2.05× | 32.4% | 80 |
+| **chunk 256K + dgram 60000** | **0.81** | **98.60** | **+622%** | 0.44 | 0.40 | 145.6 MB | 1.82× | 24.7% | 1950 |
+| chunk 256K + dgram 60000, repair off | 0.75 | **106.89** | +683% | 0.38 | 0.37 | 80.2 MB | **1.00×** | 0.0% | 925 |
+| 3 receivers | 9.99 | 8.01 | −41% | 10.19 | 0.00 | 226.0 MB | 2.83× | 48.9% | 3903 |
+| 3 receivers, PEER_HAVE off | 10.18 | 7.86 | −42% | 10.31 | 0.00 | 186.0 MB | 2.32× | 47.6% | 4094 |
+| **3 receivers, chunk 256K + dgram 60000** | **1.42** | **56.15** | +311% | 0.72 | 0.77 | 406.2 MB | 5.08× | 31.0% | 4096 |
+
+### The file is sent twice — confirmed directly
+
+The first `CHUNK_REQUEST`, issued ~250 ms after the manifest while the carousel is **~1% done**,
+asks for **10,212 of 10,240 chunks**. The sender's own marks show `repair-served value=10239`
+landing **20 ms before `carousel-complete`**. 43–49% of chunk datagrams the receiver receives are
+for chunks it already holds. Wire amplification **2.52× on a lossless path** — zero packets had
+actually been lost when the request was issued. 42% of sender CPU serves it.
+
+### ⚠️ But the waste is accidentally load-bearing
+
+**Disabling premature repair alone measured 11% *slower*** (6.60 s vs 5.86 s), and the carousel
+itself slowed from 4.76 s to 6.60 s. `HandleChunkRequestAsync` runs concurrently with
+`RunChunkCarouselAsync`, so the redundant repair stream is currently **the only thing giving the
+sender send-path parallelism**. Fixing the amplification without adding real send batching is a
+throughput regression. This is the same trap M6 round 1 fell into, approached from the other side.
+
+### Both sides are bound by per-datagram cost, not bytes and not crypto
+
+Receiver, warm baseline (10,469 ms CPU / 8,087 ms wall):
+
+| Stage | Total | µs/call | Share of per-packet work |
+|---|---|---|---|
+| **PeerHave** (bitmap encode + 2 awaited sends, **under `_stateGate`**) | **999 ms** | 97.5 | **38%** |
+| MerkleVerify | 516 ms | 50.4 | 20% |
+| DiskWrite | 465 ms | 45.4 | 18% |
+| Decode | 198 ms | 0.8 | 8% |
+| ProgressEmit | 140 ms | 13.7 | 5% |
+| Decrypt (AEAD) | 133 ms | 13.0 | 5% |
+| **Unaccounted per-datagram overhead** | **7,840 ms** | **31.6/datagram** | — |
+
+Sender: **`SendToAsync` is 8,508 ms — 66% of all sender CPU — at 32.5 µs across 261,532 calls.**
+Chunk read 801 ms, encrypt 245 ms, proof 38 ms. **GC is not a factor** (0.9–2.2% of wall, 4–8 gen2).
+
+### Receiver-side loss is entirely self-inflicted; the sender is deaf
+
+| Run | Role | Offered | Seen by app | Dropped |
+|---|---|---|---|---|
+| base | recv | 282,054 | 247,833 | **12.1%** |
+| base | **send** | 282,054 | 20,707 | **92.7%** |
+| window 4 | recv | 425,830 | 218,126 | **48.8%** |
+| repair off | recv | 143,364 | 143,364 | **0.0%** |
+| 3-recv | **send** | 315,282 | 7,889 | **97.5%** |
+
+0% loss with repair off; 12% at baseline; 49% at window 4. Nothing is lost until Castr pushes
+faster than the receiver absorbs. And **the sender drops 87–97.5% of what its own socket is
+offered**, drowning in its own loopback echo — meaning **receivers' `CHUNK_REQUEST` and
+`JOIN_REQUEST` are dropped at the sender with >90% probability during the carousel.** That is a
+correctness hazard, not just waste.
+
+### Corrections to earlier records in this file
+
+- **`PEER_HAVE`'s *share* was overstated** in the derived table above. The absolute figure was
+  right (~13.5 MB measured vs ~13.6 MB derived), but it is **6.7–13.1% of wire bytes at 1 receiver**,
+  not ~15% of datagrams — because the repair storm doubles total wire and dilutes the share. It is
+  still the **single most expensive per-chunk receiver stage** and worth +20% at 1 receiver, but
+  **worth 0% at 3 receivers** (9.99 → 10.18 s) because the bottleneck moves.
+- **M6 round 2's "consistent 1.4–1.6× win at window 2" did not reproduce.** Warm, n=3: window 1 =
+  5.86 s, window 2 = **−13%**, window 4 = **−63%** with 48.8% real receiver loss. Both regressions
+  are pure repair tail. Keeping `DefaultSendWindowSize = 1` is vindicated. The most likely
+  explanation for the original reading is the page-cache confounder plus a smaller sample.
+- **Syscall count alone does not explain the ceiling.** Raising the datagram budget 1200 → 60000 at
+  chunk 8192 cut datagrams 12.8× for only ~9%, because the carousel then outruns the receiver and
+  the win returns as a 75% repair tail. Datagram size only pays **together with** a larger chunk.
+- **Retracted:** an intermediate finding that `--interface "Loopback Pseudo-Interface 1"` was 3.1×
+  faster than auto-select was a cache-regime artifact. Interleaved A/B: auto 6.53/6.54/5.97 s vs
+  loopback 6.50/6.01 s — **no difference.** M6's original conclusion was correct.
+
+### Known test issue, pre-existing
+
+`UdpMulticastTransportTests.SendThenReceive_OverRealLoopbackSocket_DeliversPayload` binds
+**hardcoded UDP port 46101** and fails with `WSAEACCES` when a system process holds it. Verified
+failing identically on the pristine tree — not a regression from any of this work. The port should
+be made dynamic. Everything else green: 282/283 Core, plus 16/16, 14/14, 30/30, 10/10, 14/14. 0 warnings.
+
+### Ranked by measured payoff
+
+1. **Raise chunk size** — chunk 256K alone is **+77%** with no other change (amortizes the 439-byte
+   Merkle proof and shrinks the premature-repair window). Previously ranked 5th on derived reasoning; the
+   data puts it first among single changes.
+2. **Chunk 256K + datagram 60000** — **0.81 s / 98.6 MB/s, 7.2×**, at *lower* wire amplification than today.
+3. **Stop requesting chunks the carousel hasn't reached** — 2.52× → ~1.1× amplification, **but pair it
+   with send batching or it costs 11%.**
+4. **Throttle `BroadcastPeerHaveAsync`** — every-64th captures the whole +20% at 1 receiver.
+5. **Filter the sender's own loopback echo** — cheap, and fixes a >90% control-traffic drop rate.
+6. **Leave `DefaultSendWindowSize` at 1.**
+
+Instrumentation lives in `tools/bench-m7/` plus a `BenchMetrics` type, inert unless `CASTR_BENCH`
+is set (branch `worktree-agent-aad9c2ea41236900d`, uncommitted).

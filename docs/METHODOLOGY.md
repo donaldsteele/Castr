@@ -220,6 +220,25 @@ cuts data datagrams ~20%, while it collapses progress-gossip traffic from ~13.6 
 The gain tracked the gossip collapse. The quadratic gossip cost was sitting in our own data for
 two rounds, unnoticed, because we never derived what the code should cost (rule 3).
 
+**We benchmarked across a ~2× confounder without controlling for it.** The OS page cache changes
+measured throughput by 1.94× on *identical* configuration with identical datagram counts (12.6 s
+cold vs 6.5 s warm; `SendToAsync` goes 29 → 53 µs/datagram when cold). No M6 round controlled for
+it. This is the most likely explanation for the single most embarrassing entry below.
+
+**An M6 result did not reproduce.** Round 2's headline finding — window=2 as a "consistent
+1.4–1.6× win" — re-measured warm, interleaved, n=3 as a **13% regression**, with window=4 at
+**−63%** and 48.8% real receiver-side packet loss. The shipped default of 1 was right, but it was
+right for a reason we had not established: we kept it out of caution about *validation process*,
+not because we knew the number was wrong. Caution substituted for correctness here, which is luck,
+not method. Rule 1 now includes controlling cache state and interleaving A/B reps.
+
+**We also over-attributed a cause we had correctly identified.** The per-chunk progress-gossip
+cost is real and is the single most expensive per-chunk receiver stage (97.5 µs/call, 38% of
+measured per-packet work). But its *share of wire bytes* is 6.7–13.1% at one receiver, not the
+~15–20% derived here — because the repair storm doubles total wire and dilutes it. And it is worth
+**+20% at one receiver but 0% at three**, because at fan-out the bottleneck moves elsewhere. A
+correct diagnosis at the wrong magnitude still misdirects effort.
+
 **Our design docs described defenses the code did not have.**
 `wiki/concepts/repair-protocol.md` specifies randomized jitter before a first repair request,
 exponential backoff on retry, NACK suppression by overhearing another receiver's request, and
@@ -233,9 +252,27 @@ worse than no documentation, because it stops people from looking.
 ## Current state
 
 The receiver-side decoupling fix is shipped and the demo numbers in
-[`SHOWCASE.md`](SHOWCASE.md) reflect it. The remaining work is the feedback and repair discipline
-described in Approach F, which is tracked in
-[`../wiki/synthesis/roadmap.md`](../wiki/synthesis/roadmap.md). Nothing in that direction has been
-implemented yet, and the derived costs driving it are labelled as derived rather than measured in
-[`benchmarks/throughput-runs.md`](benchmarks/throughput-runs.md) until an instrumentation run
-confirms them.
+[`SHOWCASE.md`](SHOWCASE.md) reflect it. A 91-run instrumented campaign has since measured the
+remaining causes directly — see the 2026-07-25 section of
+[`benchmarks/throughput-runs.md`](benchmarks/throughput-runs.md). Headline results:
+
+- **The burst/stall period is 5.10 s**, set by `RepairOptions.RequestTimeout`, not the 250 ms
+  repair poll. Amplitude is 0.00 MB/s → 39 MB/s, with up to 70% of a transfer spent in total dead air.
+- **The file is sent twice.** The first repair request, issued while the carousel is ~1% done, asks
+  for 10,212 of 10,240 chunks. Wire amplification is 2.52× on a *lossless* path.
+- **Both sides are bound by per-datagram cost (~32 µs each way)**, not by bytes and not by crypto.
+  `SendToAsync` alone is 66% of sender CPU. GC is not a factor.
+- **The biggest single win is the one we had ranked fifth on derived reasoning**: raising the chunk
+  size is **+77%** by itself, and combined with a larger datagram budget reaches **98.6 MB/s — 7.2×
+  baseline — at lower wire amplification than today.** Derived reasoning ranked the elegant protocol
+  fixes above the boring parameter change. Measurement reversed that, which is rule 3 doing its job.
+- **The waste is accidentally load-bearing.** Removing the premature repair *alone* is **11%
+  slower**, because the redundant repair stream is currently the only thing giving the sender any
+  send-path parallelism. Exactly the trap M6 round 1 fell into, approached from the other side —
+  which is a strong hint that "this inefficiency is load-bearing" is a recurring property of this
+  codebase rather than a one-off.
+
+Work is in progress on the feedback and repair discipline of Approach F, tracked in
+[`../wiki/synthesis/roadmap.md`](../wiki/synthesis/roadmap.md). Nothing there has merged; per rule 2
+it goes through independent QA and systems-design review first, and per the point above any fix to
+the amplification must be measured together with send batching rather than in isolation.
