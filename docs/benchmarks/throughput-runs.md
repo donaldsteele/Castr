@@ -449,3 +449,302 @@ bindable ephemeral port), closing the known issue recorded above. Root cause con
 `DnsService` (PID 5208 on this host) holds UDP 46101. The test still binds real sockets and asserts
 real delivery. Suite after round 2: **431 passed, 3 skipped (container E2E), 0 failed, 0 warnings**,
 stable across 5 consecutive full-suite runs.
+
+---
+
+## 2026-07-25 — M8: `CastrPaths.DefaultChunkSize` 8192 → 262144, and re-validation of M7's repair constants
+
+Measured by the **implementer** of the change — not an independent party; weigh accordingly (rule 2).
+Post-M7 `main` (M7 is merged as of `02dbab0`). 100 MB payload, real two-process `castr send` /
+`castr receive` as separate OS processes over loopback multicast, Release binaries, group
+**239.192.55.55** (the shipped default), rotating ports. Warm: one discarded warm-up per arm, then the
+four arms **interleaved within each rep**, n=4. **Every run SHA-256 verified byte-identical against the
+source — 16 measured runs plus 4 warm-ups, 20/20 identical, no exceptions.**
+
+Two timings are reported per run, because they answer different questions:
+
+- **wall** — sender launch to receiver exit. Includes process start, JIT, and `TransferPreparation`,
+  which reads, encrypts and Merkle-hashes the *entire* file before the first chunk goes out and is itself
+  strongly chunk-size-sensitive (12,800 leaves at 8 KiB vs 400 at 256 KiB). This is what the M7 harness
+  measured, so it is the comparable column.
+- **chunkSpan** — first to last `CHUNK_PACKET` on the wire, measured by a **passive external sniffer**
+  that joins the group read-only and never sends. Transfer only, no process-start or preparation cost.
+  Deliberately independent of product code — no `CASTR_BENCH` hooks, nothing added to `Castr.Core`.
+
+### ⚠️ Read this first: on this host the multicast **group address** is worth up to 1.8x
+
+This invalidated an entire first run set and is a new confounder of the same class as the page cache.
+Identical binaries, identical payload, identical chunk size, interleaved A/B — only the group differs:
+
+| Group | 100 MB @ 262144 | Class |
+|---|---|---|
+| **239.192.55.55** (Castr's shipped default) | **5.59 s** | fast |
+| **239.192.57.63** | **5.60 s** | fast |
+| 239.192.57.61 | 10.19–10.43 s | capped |
+| 239.192.57.62 | 10.18 s | capped |
+| 239.192.57.64 | 9.89–10.43 s (n=5) | capped |
+| 239.192.57.65 | 10.39 s | capped |
+| 239.192.57.70 | 10.16 s | capped |
+| 239.192.57.128 | 10.18 s | capped |
+| 239.255.1.1 | 10.41 s | capped |
+
+Established properties, so the next person does not have to re-derive them:
+
+- **Stable per address, not drift.** Groups interleaved within a session reproduce their own class every
+  time; `.64` stayed capped across 5 consecutive runs, so it is not a "warm up the group" effect.
+- **Not foreign traffic.** A read-only sniffer parked on each group with no transfer running saw zero
+  datagrams on all of them.
+- **Not interface selection.** Auto-select vs forced `--interface "Loopback Pseudo-Interface 1"`,
+  interleaved n=3, is a dead heat (5.85 s vs 5.72 s) — independently re-confirming the campaign's
+  retraction of the "loopback is 3.1x faster" finding.
+- **The capped class is a wire *byte-rate* ceiling of ~11.2 MB/s**, and that is what makes it poison for
+  this particular A/B. Chunk size mostly buys datagram-count and gossip reduction; under a byte-rate cap
+  none of that can show up, and the measured win collapses to just the wire-byte saving (112.3 → 105.2 MB,
+  1.07x). On a capped group the same A/B reads **1.12x**; on an uncapped one it reads **1.33x**. Both are
+  internally valid, interleaved, n≥3, tight-variance run sets. The ratio is *not* robust to the group, so
+  **record the group with every future run in this file.**
+
+Root cause not established, and deliberately not chased further. What matters is the discipline: the
+uncapped class reconciles with every number previously recorded in this file, the capped class does not,
+and the numbers below are all from the shipped default group.
+
+### The A/B — 100 MB, 1 receiver, warm, interleaved, n=5
+
+Measured against **the binary that ships**, i.e. after the post-review hardening described below.
+
+| Chunk | wall (avg) | vs 8192 | wall MiB/s | chunkSpan (avg) | vs 8192 | span MiB/s | wire | amp |
+|---|---|---|---|---|---|---|---|---|
+| **8192** (old default) | 9.30 s | — | 10.75 | 8.23 s | — | 12.15 | 112.3 MB | 1.12× |
+| 65536 | 7.69 s | **1.21×** | 13.00 | 6.89 s | 1.20× | 14.52 | 106.1 MB | 1.06× |
+| **262144** (new default) | **6.98 s** | **1.33×** | **14.32** | **6.21 s** | **1.33×** | **16.10** | 105.2 MB | **1.05×** |
+| 1048576 | 6.48 s | 1.44× | 15.44 | 5.77 s | 1.43× | 17.34 | 104.7 MB | 1.05× |
+
+Per-rep wall clocks (s). Spread is under 1% in three of the four arms, which is what makes a ~30% effect
+safe to read:
+
+| Chunk | rep 1 | rep 2 | rep 3 | rep 4 | rep 5 |
+|---|---|---|---|---|---|
+| 8192 | 9.33 | 9.32 | 9.28 | 9.31 | 9.29 |
+| 65536 | 7.51 | 7.48 | 7.72 | 7.78 | 7.98 |
+| 262144 | 6.96 | 6.95 | 7.03 | 7.01 | 6.97 |
+| 1048576 | 6.46 | 6.48 | 6.48 | 6.48 | 6.48 |
+
+**This is smaller than the 1.40× that prompted the work, and that is the honest number.** The task that
+commissioned this measured 8192 → 262144 at 1.40× (7.16 s → 5.10 s); this run set gets **1.33×**. The two
+agree closely on shape — 65536 at 1.29× vs 1.21×, 1048576 at 1.47× vs 1.44× — and agree on the
+decision-relevant quantity, the **marginal gain of 1 MiB over 256 KiB: ~5% predicted, +7.7% measured**. No
+tuning was done to close the remaining gap.
+
+An earlier n=4 set on the pre-hardening binary read **1.36×** (8192 = 9.35 s, 262144 = 6.86 s). The two
+sets' 8192 baselines agree to 0.5%, so the 1.36 → 1.33 movement is run-set noise in the 262144 arm
+(6.86 → 6.98 s, 1.7%) rather than a cost of the added validation clause — which only rejects, and only
+packets a legitimate sender never emits. **1.33× is the figure to quote**, being the one measured against
+the shipping binary with the tighter sample.
+
+#### A degraded run set was discarded in between — the rule catching itself
+
+The first re-run after the E2E tier drifted monotonically *within* every arm (8192: 9.40 → 8.63 → 14.60 →
+15.93 s) and its 8192 baseline sat 30% below the recorded one. Cause: the 64 MB E2E payloads across 14
+containers had pushed free memory to 1.17 GB and the standby cache to 368 MB, against ~2.2 GB in a healthy
+state — so the 100 MB payload was being re-read from disk on later reps. That is the documented page-cache
+confounder arriving by a new route. The set was discarded rather than reported, the cache re-warmed, and the
+table above taken once free memory recovered to 3.76 GB.
+
+Worth noting what it *would* have said: **1.22×**, understating the effect. Contention compresses the ratio
+toward the byte-rate ceiling, exactly as the capped-group class does — so a loaded host biases this
+particular A/B toward "no difference", which is the direction that would have quietly killed a correct
+change. **Rep-to-rep drift within a single arm is the cheapest detector available; check it before reading
+any ratio.**
+
+### Sanity-check against the recorded baseline (rule: a row that will not reconcile is a measurement problem)
+
+The campaign's warm baseline is **13.65 MB/s** at 80 MB / chunk 8192 — but that is *pre-M7 code*, whose
+2.52× amplification came with a redundant repair stream the campaign measured as the sender's only
+send-path parallelism. The right comparison for post-M7 code is the campaign's **`repair off` row, 12.12
+MB/s**. This run set's 8192 arm measures **12.05 MiB/s = 12.6 MB/s on chunkSpan** — within 4% of that row.
+It reconciles, and it reconciles *via the mechanism the campaign predicted*, which is a stronger result
+than the raw number.
+
+### Wire composition at the new default (passive sniffer, one lossless 100 MB run at 262144)
+
+| Message | Datagrams |
+|---|---|
+| `CHUNK_PACKET` | 124,218 |
+| `PEER_HAVE` | **33** |
+| `CHUNK_REQUEST` | **2** |
+| `ANNOUNCE` / `MANIFEST` / `JOIN_REQUEST` / `KEY_GRANT` | 1 each |
+| **Total** | **124,257 datagrams / 110.9 MB for a 100 MB payload — 1.06× amplification** |
+
+M7's bounding plus the larger chunk together leave essentially nothing on the wire but the file. Note
+`PEER_HAVE` at 33 and `CHUNK_REQUEST` at 2: neither the gossip term nor the repair planner is doing
+meaningful work at this chunk size on a lossless path.
+
+### `CarouselIdleThreshold` re-validated — the margin is 36×, not the 32× degradation predicted
+
+This was flagged as the highest-risk interaction: a false idle re-opens the amplification storm M7 exists
+to prevent, and the naive argument is that a 32× larger chunk means 32× fewer watermark advances and so a
+32× thinner margin. The sniffer measured the actual quantity — the gap between **strict watermark
+advances**, which is what `ObserveChunkActivity` refreshes the valve on — across all 16 runs:
+
+| Chunk | advances | mean | p50 | p90 | p99 | **worst** | gaps >500 ms | gaps >1000 ms |
+|---|---|---|---|---|---|---|---|---|
+| 8192 | 12,800 | 0.65 ms | 0.59 | 0.82 | 1.15 | **19.6 ms** | 0 | 0 |
+| 65536 | 1,600 | 4.37 ms | 4.10 | 5.44 | 8.48 | **21.7 ms** | 0 | 0 |
+| **262144** | **400** | **15.33 ms** | 14.58 | 18.91 | 24.11 | **27.7 ms** | **0** | **0** |
+| 1048576 | 100 | 57.64 ms | 55.78 | 70.89 | 86.56 | **96.2 ms** | 0 | 0 |
+
+**The prediction was wrong, and the reason is the finding.** The *mean* gap does scale with chunk size
+(23× from 8 KiB to 256 KiB, as predicted), but a false idle is driven by the *maximum*, and the maximum
+barely moves (19.6 → 27.7 ms, 1.4×) because it is set by host scheduling jitter rather than by the
+per-chunk interval.
+
+#### ⚠️ But do not read 36× as a safety factor — it is a property of an unloaded host
+
+An independent QA harness measured the same quantity in-process under deliberate CPU contention and got
+**~2.7× at *both* chunk sizes**. The two-process + external-sniffer numbers above are the better-isolated
+measurement and stand as absolute figures, but they describe an idle machine. **On a contended host this
+threshold is breached at any chunk size**, so "36× margin" is the wrong thing to lean on.
+
+**The measurement that actually settles the risk is a load control, and it is a stronger result:** at CPU
+saturation (16 contending tasks), the **old 8 KiB default produced *more* false idles than the new 256 KiB
+one — 7 versus 3**. False-idle exposure under contention is therefore **pre-existing, and this change
+reduces it.** Two further facts from the same runs:
+
+- Every transfer that false-idled still completed **byte-identical**. The failure mode of a false idle is
+  amplification and latency — never correctness.
+- **1 MiB at load = 16 timed out entirely.** That is now a *third* independent measurement converging on
+  256 KiB, alongside the +7.7% marginal throughput and the 10.4× idle margin.
+
+Supporting adverse-case figure: on the rate-limited group class above — where the same transfer takes 1.8×
+longer and the carousel visibly pauses — the worst gap was **382 ms**, a 2.6× margin, still with **no false
+idle** in any run. That is closer to a representative worst case than 36×.
+
+`CarouselIdleThreshold` is therefore **kept at 1000 ms**, on the strength of the load control rather than
+the margin figure.
+
+### Under real kernel loss, the coarser repair unit is **faster**, not slower
+
+The central risk of this change is that a lost chunk now costs a 256 KB re-request instead of an 8 KB
+one. Windows has no `netem`, so this was measured in **containers**, two of them on a Docker bridge,
+using the identical `tc netem` technique as `tests/Castr.Core.E2ETests` (which cannot itself vary
+`--chunk-size`). 32 MB payload — 4,096 chunks at 8 KiB, 128 at 256 KiB — 10% loss, interleaved, n=6.
+
+| Chunk | avg | median | vs 8192 | reps (s) | byte-identical |
+|---|---|---|---|---|---|
+| 8192 | 24.23 s | 22.3 s | — | 23.04, 21.94, 11.94, 22.71, 43.97, 21.80 | **6/6** |
+| **262144** | **8.65 s** | **9.25 s** | **2.80×** | 10.14, 8.88, 9.13, 4.45, 9.39, 9.91 | **6/6** |
+
+**The loss case does not regress; it improves by more than the lossless case does** (2.80× vs 1.33×).
+Mechanism: with the same fraction of chunks lost, 256 KiB needs ~32× fewer repair requests and ~32×
+fewer request/serve round trips, and each round trip is quantised by the 5 s `RequestTimeout`. Fewer
+round trips beats larger ones on this path.
+
+**Two honest caveats, both of which cut against the headline number:**
+
+1. **What was actually lost is 10% of *chunks*, not 10% of packets.** The netem filter matches IP
+   datagrams of 1024–2047 bytes, and only each chunk's proof-carrying packet 0 is that large (the rest
+   are ~728 bytes at 8 KiB, ~841 at 256 KiB). This is the pre-existing, already-tracked E2E filter
+   limitation. It happens to make the arms *comparable* — the chunk-loss rate is 10% in both, and the
+   bytes needing re-request are ~3.4 MB in both — but it is not a general packet-loss result.
+2. **The filter also drops some of the 8 KiB arm's repair requests.** At 4,096 chunks a full
+   `CHUNK_REQUEST` is ~1,136 bytes, inside the drop window; at 128 chunks it is ~116 bytes and always
+   spared. So the 8192 arm is additionally penalised, and **2.80× should be read as an upper bound** on
+   the true advantage. The direction of the result is safe; the magnitude is not load-bearing.
+
+Variance is high in both arms (8192 ranges 11.9–44.0 s) because whether a stranded chunk recovers on
+repair round 1 or round 2 is worth a whole 5 s `RequestTimeout`. n=6 interleaved is enough to establish
+the sign and rough size, not a precise ratio.
+
+### Docker-gated E2E suite — the strongest single signal, and it is green
+
+`CASTR_E2E=1 dotnet test tests/Castr.Core.E2ETests` on the new default, with the container image
+**rebuilt** (see the note below — a stale cached image nearly invalidated this):
+
+| Test | Receivers | Loss | Result | netem drops |
+|---|---|---|---|---|
+| `SevenReceivers_NoLoss_AllReceiveByteIdenticalFile` | 7 | none | **Pass** (7 s) | — |
+| `FiveReceivers_UnderRealNetemLoss_RecoverViaRepair` | 5 | 20% real | **Pass** (12 s) | **5,044** |
+| `NineReceivers_UnderModerateLoss_AllRecoverByteIdentical` | 9 | 10% real | **Pass** (13 s) | **3,861** |
+
+All 21 receiver SHA-256 hashes matched their source exactly. Real kernel drops in the thousands, real
+fan-out across separate network namespaces, at 256 KiB repair granularity, unmodified tests.
+
+Note the E2E payload is 4 MiB, which was 512 chunks at the old default and is now **16** — the suite's
+own comment saying "512 chunks at the CLI's 8 KB default" is updated. The many-chunks case is still
+covered by `Castr.Core.IntegrationTests` (which pin their own small chunk sizes deliberately) and by the
+32 MB / 4,096-chunk loss A/B above, so the payload was left alone rather than inflating E2E runtime.
+
+### Two environment traps that cost real time here — record them
+
+1. **The E2E fixture reuses a cached container image and will silently test stale code.** `castr-e2e-tests:latest`
+   was 3.5 hours old and built from the *previous* default; Testcontainers skips the build when the image
+   exists (`WithCleanUp(false)`). The first E2E run would have "validated" 8192. **`docker rmi -f
+   castr-e2e-tests:latest` before any E2E run whose result depends on a code change.** The suite's README
+   already warns about staleness for a different reason; this is a second, sharper instance.
+2. **Testcontainers hangs forever against a Docker Desktop `desktop-linux` context.** It probes the legacy
+   `npipe:////./pipe/docker_engine` and never times out — two runs sat ~20 minutes with zero Docker
+   activity. `DOCKER_HOST` cannot fix it: the docker CLI accepts only `npipe:////./pipe/...` while
+   Docker.DotNet accepts only `npipe://./pipe/...`, and Castr's own skip-gate shells out to the CLI, so
+   any single value breaks one side. The working fix is `~/.testcontainers.properties` containing
+   `docker.host=npipe://./pipe/dockerDesktopLinuxEngine`, which configures Testcontainers alone.
+
+### ⚠️ The campaign said chunk 256K was **+77%**. This says **1.33×**. Both are right.
+
+This is the most instructive row in the section, and it is the reason this file records configuration
+alongside every number.
+
+| | Campaign (2026-07-25, pre-M7) | M8 (post-M7) |
+|---|---|---|
+| Baseline code | repair storm present, **2.52× amplification** | M7 merged, **1.12× amplification** |
+| Baseline goodput @ 8192 | 13.65 MB/s | 12.6 MB/s (chunkSpan) |
+| Result @ 256K | 24.10 MB/s — **+77%** | 16.31 MiB/s — **+36%** |
+
+Neither number is wrong and neither supersedes the other. **They are measured against different
+baselines, and the difference between those baselines is precisely what M7 removed.** Pre-M7, raising the
+chunk size did two things at once: it amortised the per-chunk Merkle proof *and* it collapsed the
+premature-repair storm, because a 32× shorter chunk list shrank the window in which the receiver could
+ask for chunks the carousel had not reached. The second effect was worth far more than the first, and
+M7 has since claimed it — amplification is already 1.12× at 8192 before any of this change lands, so
+there is no storm left for a bigger chunk to collapse. What remains is the genuine, permanent part:
+fewer datagrams, an amortised proof, and a smaller gossip term.
+
+**The general lesson, which is the point of keeping this log: a speedup figure is meaningless without its
+baseline, and "we already fixed the thing that made the old number big" is a completely ordinary reason
+for a number to shrink.** A reviewer who saw only "+77% expected, 36% delivered" would reasonably suspect
+a botched implementation. The correct reading is that two independent changes were partially claiming the
+same win, exactly as the campaign warned when it noted that P0 and P5 multiply rather than add. Anyone
+re-running this should expect ~1.33×, not ~1.77×, and should treat a result near 1.77× on post-M7 code as
+evidence that M7 regressed rather than as good news.
+
+### Post-review hardening (systems-design MERGE-WITH-CHANGES)
+
+Review corrected the scoping of the `ChunkPacketAssembler` finding above, and the correction is worth
+recording because it changes who the bug belongs to. **The allocation ceiling is manifest-derived, so it is
+set by `CastrPaths.MaxChunkSize` (16 MiB), not by the default chunk size** — a sender legitimately choosing
+`--chunk-size 16777216` on pre-M8 `main` already produced `new byte[16777232][]` ≈ 134 MB from a single
+crafted datagram. M8 raised *typical* exposure 32× but did not create the ceiling, so "defer it with the
+chunk-size change" was the wrong split. Two bounds were therefore tightened here, while the data-structure
+rewrite stays deferred:
+
+| | Before | After |
+|---|---|---|
+| `PacketCount` admitted for a 256 KiB chunk | 262,160 | **≤1,749** (legitimate split is ~310) |
+| `DefaultMaxPendingChunks` | 1,024 | **64** |
+| Worst-case pending allocation | ~2.1 GB | **~0.9 MB** |
+
+The new predicate bounds `PacketCount <= ceil(CiphertextLength / minFragmentBytes) + 1`, with
+`minFragmentBytes` plumbed from the session's own datagram budget at a deliberate 8× tolerance so a peer
+relaying on a smaller budget still interoperates — 5.6× headroom for correct senders, ~150× off the attack.
+Both directions are tested, and the rejection test was **verified to fail when the clause is removed**, so
+it cannot be silently deleted (the mutation-coverage discipline M7 round 3 established). `1024` was itself
+an 8 KiB-regime artifact: at 256 KiB it is ~16× more partial chunks than the 4096-slot transport inbox can
+hold in flight, so it bounded nothing a real transfer reaches while sizing the attacker's ceiling.
+
+Severity class, stated precisely because the first write-up understated it: ~1024 datagrams (~1.2 MB)
+forcing GBs of long-lived LOH allocation is **~1800× asymmetric and terminates the process**, unlike a
+packet flood, which degrades only while it lasts.
+
+Re-verified after the change, since it touches the reassembly path the loss tests exercise hardest:
+**441 passed / 3 skipped / 0 warnings** (up 2 from the new coverage), the `ChaosTransport` loss/reorder/
+duplication tests still passing **unmodified with no timeout changes**, and the Docker netem E2E tier
+re-run green on a **rebuilt** image.

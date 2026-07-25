@@ -30,8 +30,11 @@
 
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <TextBlock Text="Chunk size (bytes):" VerticalAlignment="Center" />
-                    <NumericUpDown Value="{Binding ChunkSize}" Minimum="256" Maximum="60000"
-                                   Increment="1024" Width="150" />
+                    <!-- Maximum is the top of the documented hash/repair range (1 MiB); it was 60000, which
+                         would have silently clamped the 256 KiB default back down. Increment is one 64 KiB
+                         step so the control spans the range in a usable number of clicks. -->
+                    <NumericUpDown Value="{Binding ChunkSize}" Minimum="256" Maximum="1048576"
+                                   Increment="65536" Width="150" />
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" Spacing="8">

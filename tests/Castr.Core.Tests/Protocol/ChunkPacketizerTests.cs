@@ -225,6 +225,50 @@ public class ChunkPacketizerTests
         Assert.True(assembler.PendingChunkCount <= 4, $"pending {assembler.PendingChunkCount} exceeded cap");
     }
 
+    [Fact]
+    public void Offer_PacketCountFarAboveAnyLegitimateSplit_IsRejected_EvenWhenCiphertextLengthIsInBounds()
+    {
+        // The packet-count clause, isolated. This claim passes BOTH older guards — CiphertextLength is exactly a
+        // legitimate 256 KiB chunk's ciphertext, and PacketCount <= CiphertextLength — so before the
+        // minFragmentBytes bound existed it was accepted and sized `new byte[262160][]`, ~2 MB of references from
+        // this one small datagram. Across the pending-chunk cap that is the whole attack.
+        var assembler = new ChunkPacketAssembler(
+            ChunkPacketAssembler.CiphertextBoundForChunkSize(262_144),
+            minFragmentBytes: ChunkPacketAssembler.MinFragmentBytesFor(1200));
+
+        (byte[] Ciphertext, MerkleProof Proof)? result = null;
+        var ex = Record.Exception(() => result = assembler.Offer(new ChunkPacketMessage(
+            Session, 0, 0, PacketIndex: 0, PacketCount: 262_160, CiphertextLength: 262_160, Bytes(1, 1), ProofFor(512, 0))));
+
+        Assert.Null(ex);           // dropped safely, never thrown out of the receive loop
+        Assert.Null(result);
+        Assert.Equal(0, assembler.PendingChunkCount); // and nothing was buffered
+    }
+
+    [Fact]
+    public void Offer_PeerRelayingOnAMuchSmallerDatagramBudget_IsStillAccepted()
+    {
+        // Guards the other direction: the packet-count bound must not be so tight that it breaks a peer relaying
+        // a chunk it sliced on a smaller datagram budget. 600 bytes is half the shipped budget and yields ~760
+        // packets for a 256 KiB chunk, against a bound of ~1,749 derived from the 1200-byte budget — i.e. the
+        // deliberate 8x tolerance in MinFragmentBytesFor is doing real work, not just sitting there.
+        var ciphertext = Bytes(262_160, seed: 7);
+        var proof = ProofFor(512, 0);
+        var packets = ChunkPacketizer.Split(Session, 0, 0, ciphertext, proof, maxDatagramPayload: 600);
+
+        var assembler = new ChunkPacketAssembler(
+            ChunkPacketAssembler.CiphertextBoundForChunkSize(262_144),
+            minFragmentBytes: ChunkPacketAssembler.MinFragmentBytesFor(1200));
+
+        Assert.True(packets.Count > 700, $"fixture must produce a many-packet split, got {packets.Count}");
+        (byte[] Ciphertext, MerkleProof Proof)? completed = null;
+        foreach (var packet in packets)
+            completed ??= assembler.Offer(packet);
+
+        Assert.NotNull(completed);
+        Assert.Equal(ciphertext, completed!.Value.Ciphertext);
+    }
+
     private static byte[] Bytes(int length, int seed)
     {
         var bytes = new byte[length];

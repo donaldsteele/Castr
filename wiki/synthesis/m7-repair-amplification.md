@@ -184,9 +184,31 @@ part of the predicted regression.
   default *every* chunk travels as `ChunkPacketMessage`, whose carousel-vs-repair origin is
   unknowable by design, so gating the watermark lift on origin would buy nothing. The ambiguity is
   structural; the per-pass cap is the right mitigation.
-- **Chunk size / datagram budget.** The campaign ranks this first by measured payoff (chunk 256K alone
-  +77%; with datagram 60000, 7.2x at *lower* amplification), and systems-design argues it should land
-  before this work since P1's value approaches zero at 256 KiB chunks. Sequenced separately.
+- **Chunk size — ✅ DONE (2026-07-25, M8), and it re-scored this page's own numbers.** `CastrPaths.DefaultChunkSize`
+  is now 262144. Measured **1.33x**, not the campaign's +77%, because that +77% was pre-M7: a bigger chunk used
+  to collapse the premature-repair storm as well as amortise the proof, and M7 has since claimed that half.
+  Systems-design's prediction that **P1's value approaches zero at 256 KiB was confirmed** — a lossless 100 MB
+  transfer now emits **33** PEER_HAVE datagrams and **2** CHUNK_REQUESTs total. P1 was nevertheless kept: it is
+  free when it does not bind and it is the only thing keeping the quadratic gossip term harmless for anyone who
+  lowers `--chunk-size`. All four M7 constants were re-validated against the new regime and **none changed
+  value**; what changed is that two of their doc comments were stating figures that had gone stale by 32x.
+  See the 2026-07-25 M8 section of `docs/benchmarks/throughput-runs.md` and [[roadmap]].
+  - **`MaxChunksPerRequest` (268) — kept.** Every term in its derivation (the datagram budget and the
+    `ChunkRequestMessage` encoding) is independent of chunk size, so it remains exactly correct as the
+    *fragmentation* bound it always was. One consequence did move 32x and is now recorded in code: 268 indices
+    now command **67 MB** of data from one request datagram, where it was 2.2 MB.
+  - **`MaxRequestsPerPass` (4) — kept, but it no longer bounds amplification for ordinary files.** `4 x 268 =
+    1,072` chunks/pass exceeds the entire chunk count of any file below **268 MB** at 256 KiB. It still bounds
+    gate-held planning work and a hostile receiver's burst, which are now its primary justification.
+  - **`CarouselIdleThreshold` (1 s) — kept, and this was the flagged high-risk one.** The 32x-fewer-advances
+    argument predicts a 32x thinner margin; measurement says otherwise. The *mean* advance gap scales as
+    predicted (0.65 ms -> 15.3 ms) but a false idle is driven by the *maximum*, which is set by host scheduling
+    jitter and barely moved (19.6 ms -> 27.7 ms). **Margin 51x -> 36x, not 51x -> 1.6x.** Zero gaps over 500 ms
+    in 16 runs; 382 ms worst on a degraded path, still no false idle.
+  - **`PeerHaveInterval` (250 ms) — kept**, per the reasoning above.
+- **Datagram budget.** Still 1200, deliberately untouched by M8. The campaign's 7.2x figure pairs it with the
+  chunk size, so it now needs re-measuring against the post-M7/post-M8 baseline rather than assuming the pairing
+  still multiplies — M8 is a worked example of exactly that assumption failing.
 - **Suppression by overhearing, and repair-response deduplication** — still the two unimplemented rows
   in [[repair-protocol]]'s design-intent table. Note the target field that response dedup needs cannot
   simply be appended: **a new message type is additively backward-compatible (unknown tags throw in

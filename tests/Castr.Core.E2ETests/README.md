@@ -39,13 +39,46 @@ publishes `Castr.Cli` as a self-contained linux-x64 binary and bakes it into a s
 `mcr.microsoft.com/dotnet/runtime-deps:10.0` image (plus `iproute2` and `coreutils`); the first run is
 slower while that image builds.
 
+### ⚠️ The image is cached, so a run can silently validate stale code
+
+`CastrClusterFixture` builds the image as `castr-e2e-tests:latest` with `WithCleanUp(false)`, and
+Testcontainers **skips the build entirely when an image of that name already exists**. That is deliberate —
+the publish step is the slow part — but it means a run after a code change can exercise a *previous*
+build's binary and pass. This actually happened during M8: a 3.5-hour-old image would have "validated" the
+old chunk-size default.
+
+**Before any E2E run whose result depends on a code change, delete the image first:**
+
+```bash
+docker rmi -f castr-e2e-tests:latest
+```
+
+### Docker Desktop endpoint on Windows (handled automatically)
+
+When the active Docker context is `desktop-linux`, Testcontainers probes the legacy `docker_engine` named
+pipe and **hangs indefinitely rather than failing**. `CastrClusterFixture.ConfigureDockerEndpoint` sets
+`DOCKER_HOST` in-process to `npipe://./pipe/dockerDesktopLinuxEngine` when that pipe exists and nothing has
+already chosen an endpoint, so no machine-level configuration is needed.
+
+Note the slash counts differ by consumer and this is not a typo: the docker **CLI** accepts only
+`npipe:////./pipe/...`, while **Docker.DotNet** accepts only `npipe://./pipe/...`. Since the skip-gate in
+`E2EFactAttribute` shells out to the CLI, exporting a single `DOCKER_HOST` value for both breaks one of
+them — which is why this is set in-process, after that probe, rather than in your shell.
+
 ## Scenarios
 
-| Test | Receivers | Loss | Asserts |
-|---|---|---|---|
-| `SevenReceivers_NoLoss_AllReceiveByteIdenticalFile` | 7 | none | all 7 byte-identical |
-| `FiveReceivers_UnderRealNetemLoss_RecoverViaRepair` | 5 | 20% real netem | all 5 byte-identical **and** netem actually dropped packets |
-| `NineReceivers_UnderModerateLoss_AllRecoverByteIdentical` | 9 | 10% real netem | all 9 byte-identical, netem dropped packets |
+| Test | Receivers | Payload | Chunks | Loss | Asserts |
+|---|---|---|---|---|---|
+| `SevenReceivers_NoLoss_AllReceiveByteIdenticalFile` | 7 | 4 MB | 16 | none | all 7 byte-identical |
+| `FiveReceivers_UnderRealNetemLoss_RecoverViaRepair` | 5 | **64 MB** | **256** | 20% real netem | all 5 byte-identical **and** netem actually dropped packets |
+| `NineReceivers_UnderModerateLoss_AllRecoverByteIdentical` | 9 | 16 MB | 64 | 10% real netem | all 9 byte-identical, netem dropped packets |
+
+**Payloads are sized in chunks, not bytes, and that matters.** These were one shared 4 MB constant, which was
+512 chunks at the old 8 KiB default and silently became **16** when M8 raised the default to 256 KiB. At 16
+chunks most of the repair machinery this tier defends is unreachable: `MaxChunksPerRequest` = 268 fits a
+whole file in one request so multi-batch splitting never runs, `MaxRequestsPerPass` = 4 can never bind, and
+the carousel watermark has 16 positions. The 5-receiver case is now the many-chunk case. **If the default
+chunk size changes again, re-derive these payloads from the chunk count you want, not the byte count.**
 
 ## How loss is injected without breaking the protocol
 
@@ -64,3 +97,22 @@ misses it never initializes. Two design choices keep the loss tests deterministi
   datagrams (manifest, key grant, chunk requests, peer-have) are left untouched, so the control plane gets
   through and repair does the rest. See the detailed rationale (and the M3-QA verification note) in
   `Infrastructure/CastrFanOut.cs`.
+
+### ⚠️ How much this filter drops depends on the file's chunk *count*, not just the loss percentage
+
+Non-obvious, discovered while raising the payloads in M8, and worth knowing before reading a drop count as a
+loss rate. `ChunkPacketizer.Split` sizes every fragment as
+`maxDatagramPayload - FixedEnvelopeOverhead - ProofEncodedSize(proof)`, and the Merkle proof grows with the
+file's chunk count — so **more chunks means smaller fragments**, which can fall out of the filter's
+1024–2047 byte window:
+
+| Chunks | Proof steps | Non-packet-0 IP datagram | In filter window? |
+|---|---|---|---|
+| 16 (4 MB) | 4 | ~1086 bytes | **yes — every packet is dropped** |
+| 256 (64 MB) | 8 | ~954 bytes | **no — only packet 0 is dropped** |
+
+Both are valid repair exercises, because the proof rides only on packet 0 and a chunk cannot be assembled
+without it, so losing packet 0 strands the whole chunk. But they are *different* exercises, and the raw
+`netem-dropped` figure is not comparable across payload sizes: 20% loss on 256 chunks drops ~51 packets
+(≈20% of *chunks*), where 20% on 16 chunks dropped thousands (≈20% of *packets*). Assert on
+`NetemDroppedPackets > 0` and on byte-identity, as these tests do — do not read the count as a loss rate.

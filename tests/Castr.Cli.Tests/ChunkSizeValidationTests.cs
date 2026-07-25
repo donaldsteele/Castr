@@ -27,7 +27,8 @@ public class ChunkSizeValidationTests : IDisposable
     [Fact]
     public async Task DefaultChunkSize_IsAcceptedAndPassesValidation()
     {
-        // The existing 8192 default must keep working: pre-cancel the token so RunAsync proceeds past the
+        // Whatever CastrPaths.DefaultChunkSize currently is must keep working (262144 as of M8; 8192 before
+        // it): pre-cancel the token so RunAsync proceeds past the
         // chunk-size gate and the (real) file-exists/identity/prepare steps, then observes cancellation
         // during preparation, rather than being rejected outright by the new check.
         var srcPath = Path.Combine(_dir, "payload.bin");

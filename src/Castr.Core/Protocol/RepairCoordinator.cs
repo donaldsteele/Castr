@@ -88,6 +88,21 @@ public sealed record RepairOptions(
     /// Largest index count that keeps a <see cref="ChunkRequestMessage"/> inside
     /// <see cref="WirePacketizer.DefaultMaxDatagramPayload"/> — 268 at the shipped 1200-byte budget, against a
     /// measured true single-datagram maximum of 284.
+    ///
+    /// <para><b>Re-validated at the 256 KiB default and deliberately unchanged.</b> Every term in this derivation
+    /// — the datagram budget and <see cref="MessageCodec"/>'s ChunkRequest encoding — is independent of chunk
+    /// size, so the bound it computes is exactly as correct at 256 KiB as at 8 KiB. It is a <i>fragmentation</i>
+    /// bound, not a tuning knob and not an amplification bound (see <see cref="DefaultMaxRequestsPerPass"/>), so
+    /// the fact that 268 indices now covers most of a small file is not a defect: covering the file is what a
+    /// receiver that genuinely lost the file should ask for, and the watermark decides whether it may.</para>
+    ///
+    /// <para><b>One consequence that did change by 32x, recorded because it is not obvious.</b> The cap is
+    /// denominated in indices, so the <i>data</i> one request datagram can command grew with the chunk size:
+    /// 268 x 256 KiB = <b>67 MB</b> served from a single inbound datagram, where at 8 KiB it was 2.2 MB. Castr's
+    /// own receivers are bounded by <see cref="DefaultMaxRequestsPerPass"/>, but a hostile on-segment peer is not
+    /// — it can simply emit request datagrams. The principled fix is a byte-denominated serve cap on the sender
+    /// rather than an index-denominated one; it is not made here because that changes sender behavior under load
+    /// and belongs with the repair-response-deduplication work, not with a default-value change.</para>
     /// </summary>
     public const int DefaultMaxChunksPerRequest =
         (WirePacketizer.DefaultMaxDatagramPayload - ChunkRequestEnvelopeOverhead - ChunkRequestHeadroom) / sizeof(int);
@@ -97,20 +112,46 @@ public sealed record RepairOptions(
     ///
     /// <para>Derivation, so this is not a bare number: repair capacity is
     /// <c>MaxRequestsPerPass x MaxChunksPerRequest x passes/second</c>. At the shipped values and the CLI's 250 ms
-    /// repair period that is <c>4 x 268 x 4 = 4,288 chunks/s</c>, which at the 8 KiB default chunk size is
-    /// ~35 MB/s of repair traffic — comfortably above the ~10 MiB/s wire rate real two-process measurement
-    /// actually achieves on loopback (see <c>docs/benchmarks/throughput-runs.md</c>).</para>
+    /// repair period that is <c>4 x 268 x 4 = 4,288 chunks/s</c>. <b>At the M8 default chunk size of 256 KiB that
+    /// is ~1.1 GB/s of nominal repair traffic</b> against a wire that real two-process measurement clocks at
+    /// 12-17 MB/s (see <c>docs/benchmarks/throughput-runs.md</c>) — so the cap is loose by roughly <i>two</i>
+    /// orders of magnitude, where at the old 8 KiB default it was loose by one.</para>
     ///
-    /// <para><b>So this cap is loose by roughly an order of magnitude, and in a sustained false-idle it is not the
-    /// binding constraint</b> — the wire is. That is the deliberate direction to err in: the cap exists so
-    /// amplification has a bound that does not depend on the carousel valve being right, and a cap tight enough to
-    /// bind during normal operation would throttle genuine repair and risk the liveness problems this whole area
-    /// has already produced twice. Tighten it only against a measurement showing repair traffic actually competing
-    /// with the carousel.</para>
+    /// <para><b>⚠️ Be explicit about this: at 256 KiB one of M7's own invariants has regressed.</b> This cap was
+    /// added in M7 round 2 precisely so that amplification had a bound that <i>did not depend on the carousel
+    /// watermark being right</i> — before it, any false-idle in the valve restored the full repair storm,
+    /// self-reinforcingly. That guarantee no longer holds for ordinary files: <c>4 x 268 = 1,072</c> chunks per
+    /// pass exceeds the entire chunk count of any file below <b>268 MB</b> at 256 KiB, so for such a file the cap
+    /// cannot bind at all and <b>the watermark is once again the only thing standing between the system and a
+    /// full-file repair storm.</b> The trade is reduced probability, increased consequence: the measured
+    /// watermark margin is 36x with zero false-idle events in 16 instrumented runs (see
+    /// <see cref="ReceiverSession.DefaultCarouselIdleThreshold"/>), but the per-pass blast radius went from
+    /// ~8.8 MB to a whole file. The real repair is to denominate this and
+    /// <see cref="MaxChunksPerRequest"/> in <i>bytes</i> rather than counts, which makes both chunk-size-
+    /// independent by construction; that is tracked in wiki/synthesis/roadmap.md and is deliberately not a
+    /// smaller count, which would throttle genuine recovery without fixing the denomination.</para>
+    ///
+    /// <para><b>What it does still bound</b>, and these are now its primary justification:</para>
+    /// <list type="number">
+    /// <item>work done under the receiver's state gate — <see cref="PlanRepairs"/> considers at most
+    /// <c>budget x MaxChunksPerRequest</c> candidate indices per pass, and
+    /// <see cref="IPeerTable.GetPeersWithChunk"/> is O(peers x bitmap bytes) <i>per index</i>;</item>
+    /// <item>a hostile or malfunctioning receiver's outbound burst, which is 4 datagrams per pass regardless of
+    /// chunk size;</item>
+    /// <item>amplification for files above ~268 MB, where it binds again.</item>
+    /// </list>
+    ///
+    /// <para>Deliberately <b>not</b> tightened for the larger chunk. A cap tight enough to bind during normal
+    /// operation would throttle genuine repair and risk the liveness problems this area has already produced
+    /// three times, and the measurement that would justify tightening it — repair traffic actually competing with
+    /// the carousel — has not been taken. On a lossless 100 MB transfer at 256 KiB a passive sniffer counted
+    /// <b>2 CHUNK_REQUESTs in the whole transfer</b> and 1.05x wire amplification, i.e. this cap is nowhere near
+    /// being approached in practice.</para>
     ///
     /// <para>Note the cap is denominated in <i>requests</i>, not chunks or bytes, so its real wire cost scales with
-    /// <see cref="MaxChunksPerRequest"/> and therefore with the datagram budget: raising the datagram budget raises
-    /// this cap's effective chunk throughput without the number changing.</para>
+    /// <see cref="MaxChunksPerRequest"/> <i>and</i> with the chunk size: raising either raises this cap's effective
+    /// byte throughput without the number changing. That is exactly why the 256 KiB default moved it from "loose"
+    /// to "not binding", without a single character of it changing.</para>
     /// </summary>
     public const int DefaultMaxRequestsPerPass = 4;
 
