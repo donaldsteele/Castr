@@ -74,3 +74,6 @@ Thumbs.db
 ## User secrets / local config
 *.local.json
 secrets.json
+
+# Claude Code session state and agent worktrees (local only)
+.claude/

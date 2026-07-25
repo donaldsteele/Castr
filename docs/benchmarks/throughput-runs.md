@@ -322,7 +322,11 @@ be made dynamic. Everything else green: 282/283 Core, plus 16/16, 14/14, 30/30, 
 6. **Leave `DefaultSendWindowSize` at 1.**
 
 Instrumentation lives in `tools/bench-m7/` plus a `BenchMetrics` type, inert unless `CASTR_BENCH`
-is set (branch `worktree-agent-aad9c2ea41236900d`, uncommitted).
+is set, on branch **`bench/m7-instrumentation`**. That branch is the reproduction path for every
+number in this section — check it out and run `tools/bench-m7/Run-Matrix3.ps1` to regenerate the
+A/B table. It is deliberately kept off `main` because it adds `BENCH`-tagged hooks to product code
+that were never reviewed for merge; the hooks are inert unless `CASTR_BENCH` is set (`Enabled` is a
+`static readonly bool`, so the JIT elides the bodies).
 
 ---
 
