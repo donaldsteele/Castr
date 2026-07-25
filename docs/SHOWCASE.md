@@ -45,7 +45,7 @@ Every panel is a real, independent `castr receive --tui` process — nothing her
 
 ## How these were made
 
-Every asset on this page is a real capture of `main`'s actual `Castr.Cli`/`Castr.Tui`/`Castr.Gui.Desktop` binaries, sending real (sparse-allocated, correctly-sized) demo files over real loopback IP multicast — chunked, BLAKE3-hashed, Merkle-proofed, ChaCha20-Poly1305-encrypted, and verified on arrival exactly as a real cross-machine transfer would be. Screen capture used `ffmpeg`'s `ddagrab` (DXGI Desktop Duplication) rather than the older `gdigrab`, since Windows Terminal's GPU-composited rendering desaturates badly under legacy GDI BitBlt capture.
+Every asset on this page is a real capture of `main`'s actual `Castr.Cli`/`Castr.Tui`/`Castr.Gui.Desktop` binaries, sending real (sparse-allocated, correctly-sized) demo files over real loopback IP multicast — chunked, BLAKE3-hashed, Merkle-proofed, ChaCha20-Poly1305-encrypted, and verified on arrival exactly as a real cross-machine transfer would be. Screen capture used `ffmpeg`'s `ddagrab` (DXGI Desktop Duplication) rather than the older `gdigrab`, since Windows Terminal's GPU-composited rendering desaturates badly under legacy GDI BitBlt capture. The capture scripts themselves are saved in [`tools/demo-capture/`](../tools/demo-capture/) so this media can be regenerated later.
 
 ## What's not shown here yet
 
