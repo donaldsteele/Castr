@@ -40,9 +40,15 @@ jobs:
           global-json-file: global.json
 
       # The net10.0-ios TFM needs the `ios` .NET workload payload installed on the runner (the SDK ships the
-      # workload metadata but not the payload).
-      - name: Install .NET iOS workload
-        run: dotnet workload install ios
+      # workload metadata but not the payload). We ALSO install `android`: with -p:CastrMobileTargets=true the
+      # referenced Castr.Core.Discovery declares net10.0;net10.0-android;net10.0-ios, and `restore` resolves the
+      # whole graph across every declared TFM — so the android workload manifest must be present or restore
+      # fails ("the following workloads must be installed: android"). Only the net10.0-ios TFM is actually
+      # BUILT here (a -f net10.0-ios build compiles just the compatible head of each project reference), so no
+      # Android SDK/JDK is needed — installing the workload only satisfies the cross-TFM restore validation.
+      # This mirrors the sibling Android CI, which installs the ios workload for the same reason.
+      - name: Install .NET iOS + Android workloads
+        run: dotnet workload install ios android
 
       # Simulator build — no code-signing identity / provisioning profile required (unlike a device .ipa),
       # matching this project's "no paid-developer-account dependency" v1 stance (real signing is M5 scope,
