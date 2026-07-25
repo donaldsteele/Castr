@@ -11,6 +11,15 @@ Runs on Windows, macOS, and Linux with full IP multicast; iOS and Android join t
 same swarm as unicast clients over LAN-discovered peers, since neither OS allows
 apps to reliably join true multicast groups.
 
+## See it in action
+
+<p align="center"><img src="docs/media/lan-party-desktop-gui.gif" alt="Castr desktop GUI: a live multicast transfer between two windows, trust prompt and progress in real time" width="760"></p>
+
+One sender, any number of receivers, one broadcast — a LAN party mod pack push, a
+sysadmin scripting a fleet config rollout, a test lab loading the same dataset onto
+every bench machine at once. **[See all three, with GIFs of the CLI, the colorful
+TUI dashboard, and the desktop GUI →](docs/SHOWCASE.md)**
+
 ## Status
 
 M0 (scaffolding) through M4 (mobile) are complete; M5 (release automation)
