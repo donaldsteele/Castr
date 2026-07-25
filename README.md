@@ -22,8 +22,12 @@ TUI dashboard, and the desktop GUI →](docs/SHOWCASE.md)**
 
 ## Status
 
-M0 (scaffolding) through M4 (mobile) are complete; M5 (release automation)
-is next. Chunk payloads are ChaCha20-Poly1305-encrypted end-to-end and
+M0 (scaffolding) through M6 are complete: M5 shipped the showcase docs
+below, and M6 root-caused and fixed a real send/receive throughput
+bottleneck (see "See it in action" below and
+`wiki/synthesis/m6-throughput-pipelining.md`) — formal release automation
+(tag-triggered releases, checksums/signatures) remains open, tracked in
+`wiki/synthesis/roadmap.md`. Chunk payloads are ChaCha20-Poly1305-encrypted end-to-end and
 travel over MTU-safe wire packets (chunks split/reassembled below the
 crypto layer) — see `wiki/synthesis/m1.5-encryption-summary.md` and
 `wiki/synthesis/m3-test-ci-hardening-summary.md`.
