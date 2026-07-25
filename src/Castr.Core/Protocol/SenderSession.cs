@@ -93,6 +93,17 @@ public sealed class SenderSession(
     // the M6 write-up in wiki/synthesis/roadmap.md. Worth reconsidering with a cheaper gating primitive (e.g. a
     // manually-managed counter/lock rather than SemaphoreSlim) if the double-counting ever proves to matter in
     // practice.
+    //
+    // IMPORTANT for anyone raising DefaultSendWindowSize (or recommending a --send-window-size value) above 1:
+    // this double-counting gap means the REAL peak concurrent transport.SendAsync calls under simultaneous
+    // carousel+repair traffic is up to 2x the configured window, not the window itself. At the configured
+    // window=2 that M6 round 2 measured as a consistent, real win, the real spike is therefore 4 — a value
+    // round 1's own benchmarking put squarely in the "consistent regression" zone (2-5x slower), before the
+    // round-2 receiver-side fix (channel-decoupled UdpMulticastTransport read loop, bigger socket buffers) was
+    // in place. Round 2 never benchmarked sustained heavy repair traffic overlapping the carousel at window=2
+    // with the receiver fix — only the clean/low-loss case. Re-validate specifically under that combined
+    // scenario (real repair load concurrent with an in-flight carousel) before treating window=2 as safe to
+    // ship as a new default, not just the 1:1 and multi-receiver-no-repair-storm cases round 2 covered.
     private readonly int _sendWindowSize = sendWindowSize > 0
         ? sendWindowSize
         : throw new ArgumentOutOfRangeException(nameof(sendWindowSize), "Send window size must be positive.");

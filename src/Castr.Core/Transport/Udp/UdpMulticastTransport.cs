@@ -42,6 +42,7 @@ public sealed class UdpMulticastTransport : IMulticastTransport
     private readonly Channel<ReceivedPacket> _inbox;
     private readonly CancellationTokenSource _readerCts = new();
     private readonly Task _readerLoopTask;
+    private bool _disposed;
 
     public UdpMulticastTransport(
         IPAddress groupAddress, int port, IPAddress? interfaceAddress = null, bool multicastLoopback = true, short timeToLive = 1)
@@ -146,8 +147,18 @@ public sealed class UdpMulticastTransport : IMulticastTransport
         {
             // normal shutdown (DisposeAsync cancelled us, or the bounded channel's WriteAsync observed cancellation)
         }
+        catch (Exception ex)
+        {
+            // A genuine, unexpected fault in this loop itself (not cancellation, and not one of the
+            // socket-teardown cases TryReceiveAsync already turns into a clean "end the loop" null). Complete
+            // the channel WITH the exception so it surfaces to whoever is enumerating ReceiveAsync via
+            // ReadAllAsync, instead of being silently absorbed here and looking like an ordinary end-of-stream.
+            _inbox.Writer.TryComplete(ex);
+        }
         finally
         {
+            // No-op if the catch above already completed the channel (with or without an error) — TryComplete
+            // only succeeds once; this is just the normal-path completion for the common shutdown case.
             _inbox.Writer.TryComplete();
         }
     }
@@ -175,6 +186,14 @@ public sealed class UdpMulticastTransport : IMulticastTransport
 
     public async ValueTask DisposeAsync()
     {
+        // IAsyncDisposable.DisposeAsync is conventionally expected to tolerate repeated calls (the pre-round-2
+        // version — just _socket.Dispose() — was naturally idempotent; the sibling UdpUnicastTransport still
+        // is). _readerCts.Dispose() below means a second call would otherwise throw ObjectDisposedException at
+        // _readerCts.Cancel(), so guard re-entry explicitly.
+        if (_disposed)
+            return;
+        _disposed = true;
+
         _readerCts.Cancel();
         _socket.Dispose(); // unblocks a pending ReceiveFromAsync immediately (caught as ObjectDisposedException in TryReceiveAsync)
         try { await _readerLoopTask.ConfigureAwait(false); }
