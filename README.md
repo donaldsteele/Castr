@@ -20,6 +20,12 @@ sysadmin scripting a fleet config rollout, a test lab loading the same dataset o
 every bench machine at once. **[See all three, with GIFs of the CLI, the colorful
 TUI dashboard, and the desktop GUI →](docs/SHOWCASE.md)**
 
+Interested in how the performance work was actually done — including the fix we shipped
+first and had to reverse, and why we read UFTP's source and then declined to copy its
+congestion control? **[METHODOLOGY.md](docs/METHODOLOGY.md)** covers the approaches and the
+reasoning; [`docs/benchmarks/throughput-runs.md`](docs/benchmarks/throughput-runs.md) keeps
+every raw measurement behind it.
+
 ## Status
 
 M0 (scaffolding) through M6 are complete: M5 shipped the showcase docs

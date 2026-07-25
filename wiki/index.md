@@ -35,3 +35,11 @@ When this file exceeds ~300 lines or the wiki passes ~150 pages, shard into `wik
 - [[m3-test-ci-hardening-summary]] — M3 complete: real chunk/wire-packet split, Testcontainers E2E fan-out (real netem loss), security test pass, macOS CI multicast bug found+fixed (broken since M1), Tui flaky-test fix; 295 tests; QA PASS.
 - [[m4-mobile-summary]] — M4 complete: TCP unicast swarm-pull tier + native mDNS discovery, Android/iOS GUI heads (real APK/Xcode CI verification), a real Merkle position-relabeling defect found+fixed in the M1-era primitive, libsodium iOS-Simulator gap and view-model duplication documented; 359 tests.
 - [[m6-throughput-pipelining]] — M6 complete: root-caused the ~1.6-2.4 MB/s demo-plateau to receiver-side serialization (not sender-side, round 1's first guess); fixed via a channel-decoupled receive loop + explicit socket buffers; three rounds, two independent QA+systems-design reviews; 367 tests.
+
+## Documentation outside the wiki
+
+Kept here so the index surfaces them; these are public-facing repo docs, not wiki pages.
+
+- `docs/METHODOLOGY.md` — how Castr's performance work is done: the three measurement rules, every throughput approach shipped/reverted/rejected with reasoning (including why porting UFTP's TFMCC was rejected after reading its source), and an on-the-record "what we got wrong" section. Read alongside [[m6-throughput-pipelining]].
+- `docs/benchmarks/throughput-runs.md` — append-only log of every real throughput measurement, plus derived-from-code overhead tables (labelled derived vs. measured). The durable home for numbers that previously survived only as prose.
+- `docs/SHOWCASE.md` — the three use-case demos with real captured media (see M5 in [[roadmap]]).
