@@ -96,7 +96,13 @@ public class MobileReceiveFlowTests
         await pull;
 
         Assert.False(vm.Progress.IsComplete);
-        Assert.Contains("untrusted", vm.Status, StringComparison.OrdinalIgnoreCase);
+        // PullAsync's synchronous "peer rejected" write and OnTrustDenied's Dispatcher.UIThread.Post callback
+        // both fire for this scenario; whichever lands last wins the Status text (observed to vary by platform
+        // dispatcher-pump timing - a real, harmless race, since either message correctly signals rejection).
+        // Mirrors the same tolerance SwarmReceiveFlowTests already uses for the identical race.
+        bool rejected = vm.Status.Contains("untrusted", StringComparison.OrdinalIgnoreCase)
+                        || vm.Status.Contains("denied", StringComparison.OrdinalIgnoreCase);
+        Assert.True(rejected, $"Expected a rejection status, got: {vm.Status}");
     }
 
     [AvaloniaFact]
