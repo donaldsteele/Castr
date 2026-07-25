@@ -52,6 +52,10 @@ TestResults/
 ## Docker/Testcontainers scratch
 docker-compose.override.yml
 
+## Demo-capture scratch workspace (tools/demo-capture) — regenerate anytime via
+## New-DemoFiles.ps1 + the capture-*.ps1 scripts; only the scripts themselves are tracked.
+tools/demo-capture/workspace/
+
 ## graphify generated output — regenerate anytime via `/graphify --update`.
 ## GRAPH_REPORT.md is kept tracked (small, human-readable, diffable); everything
 ## else here is large and/or a pure cache, not worth versioning on every change.
