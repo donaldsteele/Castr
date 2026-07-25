@@ -46,9 +46,13 @@ jobs:
         with:
           global-json-file: global.json
 
-      # The net10.0-android TFM needs the `android` .NET workload.
-      - name: Install .NET Android workload
-        run: dotnet workload install android
+      # The net10.0-android TFM needs the `android` workload. The `ios` workload is ALSO required here — not
+      # to build iOS, but because this project references Castr.Core.Discovery, whose CastrMobileTargets=true
+      # multi-targeting includes net10.0-ios; a graph RESTORE evaluates every TFM (including ios) and fails
+      # workload resolution (NETSDK1178) if the ios workload manifest is absent, even though only the android
+      # TFM is ever compiled here. Installing both keeps restore happy without ever linking an iOS build.
+      - name: Install .NET mobile workloads
+        run: dotnet workload install android ios
 
       # Let .NET Android provision the exact SDK platform/build-tools its target API needs, using the JDK +
       # ANDROID_HOME set up above (avoids guessing API/build-tools versions by hand).

@@ -1,0 +1,92 @@
+name: CI (Mobile / iOS)
+
+# Dedicated iOS-head workflow, kept SEPARATE from ci.yml so it never races the cross-OS matrix (which
+# installs no mobile workloads) and so the sibling Android work can evolve ci.yml/its own workflow
+# independently. It builds the net10.0-ios head — which the default `dotnet build` compiles only as a trivial
+# net10.0 stub (the real iOS head is gated behind -p:CastrMobileTargets=true) — on GitHub's hosted macOS
+# runner, the only environment in this project with a real Xcode toolchain. This is the FIRST real
+# build/link verification of the NWBrowser/NWListener discovery bindings (Castr.Core.Discovery, iOS head)
+# and of the iOS app head itself. Path-filtered so it runs only when the iOS head or the code it depends on
+# actually changes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/Castr.Gui.iOS/**'
+      - 'src/Castr.Gui/**'
+      - 'src/Castr.Core.Discovery/**'
+      - 'src/Castr.Core/**'
+      - '.github/workflows/ci-mobile-ios.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/Castr.Gui.iOS/**'
+      - 'src/Castr.Gui/**'
+      - 'src/Castr.Core.Discovery/**'
+      - 'src/Castr.Core/**'
+      - '.github/workflows/ci-mobile-ios.yml'
+
+jobs:
+  build-ios:
+    # GitHub's hosted macOS runners ship a full Xcode toolchain — the whole point of this job, and the only
+    # way this project's iOS code has ever been really build-/link-verified.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      # The net10.0-ios TFM needs the `ios` .NET workload payload installed on the runner (the SDK ships the
+      # workload metadata but not the payload).
+      - name: Install .NET iOS workload
+        run: dotnet workload install ios
+
+      # Simulator build — no code-signing identity / provisioning profile required (unlike a device .ipa),
+      # matching this project's "no paid-developer-account dependency" v1 stance (real signing is M5 scope,
+      # the same way ci.yml's desktop `package` zips are documented as unsigned CI-convenience artifacts).
+      # macos-latest is Apple Silicon, so the simulator RID is iossimulator-arm64. CastrMobileTargets=true
+      # flows into the referenced Castr.Core.Discovery so its net10.0-ios head (the real NWBrowser/NWListener
+      # impl) is compiled and linked here too.
+      - name: Build Castr.Gui.iOS (Release, iOS simulator)
+        run: >
+          dotnet build src/Castr.Gui.iOS/Castr.Gui.iOS.csproj
+          -c Release
+          -f net10.0-ios
+          -p:CastrMobileTargets=true
+          -p:RuntimeIdentifier=iossimulator-arm64
+
+      # Produce the simulator .app bundle. HONESTY: a simulator-runnable build is NOT a sideloadable device
+      # app — a real device .ipa needs a signing identity/provisioning profile this project intentionally
+      # doesn't configure (M5 scope). This is the closest honest approximation of packaging achievable without
+      # paid Apple developer infrastructure.
+      - name: Publish Castr.Gui.iOS (simulator .app)
+        run: >
+          dotnet publish src/Castr.Gui.iOS/Castr.Gui.iOS.csproj
+          -c Release
+          -f net10.0-ios
+          -p:CastrMobileTargets=true
+          -p:RuntimeIdentifier=iossimulator-arm64
+          -o ${{ github.workspace }}/artifacts/ios
+
+      # Zip the .app bundle (a directory) so upload-artifact preserves its internal structure, matching the
+      # convention of ci.yml's `package` job.
+      - name: Zip simulator .app bundle
+        run: |
+          set -euo pipefail
+          APP=$(find "${{ github.workspace }}/artifacts/ios" "${{ github.workspace }}/src/Castr.Gui.iOS/bin/Release/net10.0-ios" -maxdepth 3 -name '*.app' -type d 2>/dev/null | head -n1)
+          if [ -z "$APP" ]; then
+            echo "No .app bundle was produced." >&2
+            exit 1
+          fi
+          echo "Zipping simulator app bundle: $APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "${{ github.workspace }}/castr-ios-simulator.app.zip"
+
+      - name: Upload simulator .app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: castr-ios-simulator-app
+          path: ${{ github.workspace }}/castr-ios-simulator.app.zip
+          if-no-files-found: error
