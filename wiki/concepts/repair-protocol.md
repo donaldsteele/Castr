@@ -21,11 +21,11 @@ How a [[castr-project]] receiver that's missing chunks gets them from peers inst
 ## Desktop vs. mobile delivery mode
 
 - **Desktop (real multicast available)**: repair responses are themselves **multicast**, rate-limited/deduplicated — one fulfilled repair request then self-heals every receiver with that same gap, not just the requester. This is NORM (RFC 5740) / FLUTE (RFC 3926) -style behavior, chosen deliberately over pure unicast repair because it directly serves the bandwidth-fan-out goal. Repair *requests* can also be multicast with randomized-delay NACK-style suppression: a receiver that overhears someone else already asking for the same chunk skips its own duplicate request.
-- **Mobile (no multicast, see [[castr-project]])**: peer discovery is via native mDNS instead of multicast gossip, and repair is strictly unicast — there is no fan-out win available on this tier, only the swarm-pull benefit of not depending solely on the original sender.
+- **Mobile (no multicast, see [[castr-project]])**: peer discovery is via native mDNS instead of multicast gossip, and repair is strictly unicast — there is no fan-out win available on this tier, only the swarm-pull benefit of not depending solely on the original sender. **Implemented in M4** — see [[m4-mobile-summary]] and [[wire-protocol]]'s new swarm-pull section: `SwarmPullSession` over TCP is the mobile repair/pull mechanism, `IServiceDiscovery` (`NsdManager`/`NWBrowser`, see [[tech-stack]]) is the mobile peer-discovery mechanism, and both share the exact same manifest/Merkle/AEAD verification the desktop multicast tier uses — a pull from an untrusted or malicious mobile peer is exactly as safe as a multicast repair response.
 
 ## The `IPeerTable` abstraction (cross-tier design constraint)
 
-`IPeerTable` is populated differently per tier — multicast-carried `PEER_HAVE` gossip on desktop, mDNS + gossip on mobile — but is consumed identically by one `RepairCoordinator`. This abstraction had to be designed during the [[roadmap]]'s core milestone (M1) even though mobile is the last milestone (M4): building the repair coordinator multicast-first without this seam would force a rework once mobile work started, quietly breaking the "mobile last is free" assumption in the milestone sequencing.
+`IPeerTable` is populated differently per tier — multicast-carried `PEER_HAVE` gossip on desktop, mDNS + gossip on mobile — but is consumed identically by one `RepairCoordinator`. This abstraction had to be designed during the [[roadmap]]'s core milestone (M1) even though mobile is the last milestone (M4): building the repair coordinator multicast-first without this seam would force a rework once mobile work started, quietly breaking the "mobile last is free" assumption in the milestone sequencing. **That bet paid off in M4**: `PeerTable.ObserveDiscovered(Endpoint, DateTimeOffset)` was added to feed mDNS-discovered peers in (with an `UnknownChunkPopCount = -1` sentinel, distinct from gossip-confirmed zero, so a peer only *discovered* but never confirmed to have any chunks still sorts strictly last in `RepairCoordinator`'s ranking) without any change to `RepairCoordinator` itself or to how the desktop tier populates the same table.
 
 ## Failure modes handled by design
 
@@ -38,3 +38,5 @@ How a [[castr-project]] receiver that's missing chunks gets them from peers inst
 - [[castr-project]]
 - [[wire-protocol]]
 - [[security-model]]
+- [[tech-stack]]
+- [[m4-mobile-summary]]
