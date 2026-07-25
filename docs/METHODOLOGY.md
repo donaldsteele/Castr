@@ -300,6 +300,22 @@ fixing rather than tolerating, because a flaky test *in an area the code has alr
 twice* teaches the team to re-run instead of investigate — which is how the original defects survived
 three review rounds. Prefer the hand-fed injected-clock form for anything asserting liveness.
 
+**A second environmental confounder, found the same way the first one should have been: the multicast
+group address is worth up to 1.8× on this host.** Identical binaries, identical payload, identical chunk
+size — only the group differs, and `239.192.55.55` finishes a 100 MB transfer in 5.6 s while
+`239.192.57.64` reproducibly takes 10.2 s. It is stable per address (not warm-up: `.64` stayed slow across
+five consecutive runs), it is not foreign traffic (a read-only sniffer parked on each idle group saw zero
+datagrams), and it is not interface selection (auto vs forced loopback is a dead heat, which incidentally
+re-confirms the retraction above). The slow class is a wire *byte-rate* ceiling of ~11.2 MB/s, and that is
+what makes it poison rather than merely noisy: chunk size mostly buys datagram-count and gossip reduction,
+so under a byte-rate cap none of that can show up, and the M8 chunk-size A/B reads **1.12× on a capped
+group and 1.33× on an uncapped one**. Both run sets were warm, interleaved, n≥3, with tight variance —
+i.e. **internal validity again proved nothing about the environment**, which is the same lesson the M7
+entry above records, arriving through a different door. The practical rule added: **record the multicast
+group with every run**, and treat an unexplained absolute-throughput gap as an environment question before
+an implementation question. Root cause is not established, and chasing it was deliberately abandoned once
+the shipped default group was confirmed to be in the fast class.
+
 **We reached for a mechanism story to explain a number we should have distrusted.** Alongside the
 withdrawn claim, the same report argued the fix "preserved" the repair stream's incidental
 send-path parallelism, which would have explained why it did not see the predicted −11%. Its own
@@ -327,6 +343,14 @@ remaining causes directly — see the 2026-07-25 section of
   size is **+77%** by itself, and combined with a larger datagram budget reaches **98.6 MB/s — 7.2×
   baseline — at lower wire amplification than today.** Derived reasoning ranked the elegant protocol
   fixes above the boring parameter change. Measurement reversed that, which is rule 3 doing its job.
+  **Update (M8): the chunk-size default shipped and delivered 1.33×, not +77% — and both numbers are
+  correct.** The +77% was measured pre-M7, where a larger chunk *also* collapsed the premature-repair
+  storm; M7 landed first and claimed that half, leaving only the permanent part. Two changes were
+  partially claiming the same win, exactly as "these multiply rather than add" should have predicted.
+  **The general rule this earns: a speedup figure is meaningless without its baseline, and "we already
+  fixed the thing that made the old number big" is an ordinary reason for a number to shrink** — not
+  evidence of a botched implementation. It also means the 7.2× datagram-budget pairing above must be
+  re-measured against the post-M7/post-M8 baseline rather than assumed to still hold.
 - **The waste is accidentally load-bearing.** Removing the premature repair *alone* is **11%
   slower**, because the redundant repair stream is currently the only thing giving the sender any
   send-path parallelism. Exactly the trap M6 round 1 fell into, approached from the other side —

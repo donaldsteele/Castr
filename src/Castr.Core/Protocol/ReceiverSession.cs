@@ -50,11 +50,21 @@ public sealed class ReceiverSession
     /// via <see cref="ReceiverSessionOptions.PeerHaveInterval"/>.
     ///
     /// <para>PEER_HAVE carries the <b>whole</b> per-file bitmap, so emitting one per verified chunk makes total
-    /// gossip quadratic in file size: <c>FileSize² / (8 · chunkSize²)</c> bytes. At the 8 KiB default that is
+    /// gossip quadratic in file size: <c>FileSize² / (8 · chunkSize²)</c> bytes. At the old 8 KiB default that was
     /// ~13.5 MB of pure gossip for an 80 MiB transfer and ~1.3 GB for an 800 MiB one — more than the payload
-    /// itself. Worse, the encoded message (~1328 bytes for an 80 MiB transfer) exceeds
-    /// <see cref="WirePacketizer.DefaultMaxDatagramPayload"/>, so each one fragments into two or more datagrams,
+    /// itself. Worse, the encoded message (~1328 bytes for an 80 MiB transfer) exceeded
+    /// <see cref="WirePacketizer.DefaultMaxDatagramPayload"/>, so each one fragmented into two or more datagrams,
     /// and per-datagram cost — not bytes — is what both sides are actually bound by.</para>
+    ///
+    /// <para><b>Re-validated at the 256 KiB default, and kept unchanged.</b> Because the term is quadratic in
+    /// <i>chunkSize</i> too, a 32x larger chunk cuts it 1024x: a 100 MB transfer now gossips ~20 KB total and an
+    /// 800 MiB one ~1.3 MB, and the bitmap fits one datagram at any realistic file size. So this interval no
+    /// longer defends against anything close to a scaling wall, and a passive sniffer counted just <b>33</b>
+    /// PEER_HAVE datagrams across a lossless 100 MB transfer. It is retained anyway, on purpose: it still removes
+    /// ~92% of those emissions (400 chunks would otherwise mean 400), it costs nothing when it does not bind, and
+    /// it is the only thing keeping the quadratic term harmless for a caller who lowers <c>--chunk-size</c> —
+    /// which remains fully supported. Removing a cheap guard because the <i>current default</i> happens to sit
+    /// outside its range would re-arm the wall for everyone who moves off that default.</para>
     ///
     /// <para>Coalescing to a fixed interval keeps the message's documented dual purpose intact (see
     /// wiki/concepts/repair-protocol.md: PEER_HAVE doubles as free peer discovery on the multicast tier) while
@@ -90,8 +100,38 @@ public sealed class ReceiverSession
     /// <i>hung</i> a started file, because multicast repair traffic from any peer held every receiver's valve
     /// shut; then seeding every file's timer at manifest acceptance <i>over-requested</i>, because the sender
     /// carousels files sequentially, so a later file's valve opened before its carousel had begun.
-    /// <see cref="RepairOptions.MaxRequestsPerPass"/> now bounds amplification independently, so this threshold
-    /// is a latency knob rather than the thing standing between the system and a repair storm.</para>
+    /// <see cref="RepairOptions.MaxRequestsPerPass"/> bounds amplification independently for files above ~268 MB,
+    /// so below that size this threshold is once again the main thing standing between the system and a repair
+    /// storm — see <see cref="RepairOptions.DefaultMaxRequestsPerPass"/>.</para>
+    ///
+    /// <para><b>Re-validated by measurement when the default chunk size went 8 KiB -> 256 KiB, and kept.</b> The
+    /// worry was structural: the quantity this threshold races is the gap between two <i>strict watermark
+    /// advances</i>, and a 32x larger chunk means 32x fewer advances, so the obvious prediction is that the
+    /// margin shrinks 32x.</para>
+    ///
+    /// <para><b>The result that actually answers that worry is a load control, not a margin figure.</b> Under CPU
+    /// saturation (16 contending tasks) the <i>old</i> 8 KiB default produced <b>more</b> false idles than the new
+    /// 256 KiB one — <b>7 versus 3</b>. So false-idle exposure under contention is <i>pre-existing</i>, and this
+    /// change <i>reduces</i> it. Two further facts from the same runs: every transfer that false-idled still
+    /// completed <b>byte-identical</b> (the failure mode is amplification and latency, never correctness), and
+    /// <b>1 MiB at the same load timed out entirely</b> — a third independent measurement converging on 256 KiB.</para>
+    ///
+    /// <para><b>On an unloaded host</b>, a passive external sniffer (100 MB, real two-process, warm, n=4 per arm)
+    /// measured the advance-gap distribution directly:</para>
+    /// <list type="bullet">
+    /// <item>8 KiB — mean 0.65 ms, p99 1.2 ms, <b>worst 19.6 ms</b> -> 51x</item>
+    /// <item>256 KiB — mean 15.3 ms, p99 24.1 ms, <b>worst 27.7 ms</b> -> <b>36x</b></item>
+    /// <item>1 MiB — mean 57.6 ms, p99 86.6 ms, <b>worst 96.2 ms</b> -> 10.4x</item>
+    /// </list>
+    /// <para>The <i>mean</i> gap scales with the chunk size (23x from 8 KiB to 256 KiB, as predicted) but the
+    /// <i>maximum</i> barely moves (19.6 -> 27.7 ms, 1.4x), because the worst case is set by host scheduling
+    /// jitter rather than the per-chunk interval — which is why the 32x prediction did not hold.</para>
+    ///
+    /// <para><b>Read those multiples as a property of an unloaded host, not as a safety factor.</b> A harsher
+    /// in-process harness measured the same quantity at ~2.7x <i>at both chunk sizes</i>, and a more
+    /// representative adverse figure is the 382 ms worst gap seen on a rate-limited path (2.6x clear). On a
+    /// contended host this threshold is breached at any chunk size; that is what the load control above measures,
+    /// and it is the reason the argument for keeping 1000 ms rests on the control rather than on "36x".</para>
     /// </summary>
     public static readonly TimeSpan DefaultCarouselIdleThreshold = TimeSpan.FromMilliseconds(1000);
 
@@ -480,9 +520,25 @@ public sealed class ReceiverSession
 
         // Now that the trusted manifest tells us the largest legitimate chunk for this transfer, bound the chunk
         // reassembler to that chunk size (+ AEAD tag) so a crafted ChunkPacket can never claim more ciphertext —
-        // or more packets — than a real chunk of this transfer would.
+        // or more packets — than a real chunk of this transfer would. This is manifest-derived, so it tracks the
+        // default chunk size automatically and needed no change when that default went 8 KiB -> 256 KiB (M8).
+        //
+        // KNOWN GAP found while re-validating that at M8, pre-existing and NOT introduced by the chunk-size
+        // change: ManifestFileEntry.ChunkSize is never range-checked, here or in ManifestCodec.Decode. It is
+        // covered by the sender's Ed25519 signature, so reaching this requires a *trusted* sender, which is why
+        // this is a robustness gap rather than a remote-attacker hole. But a trusted sender that is buggy or
+        // compromised gets two things: a ChunkSize near int.MaxValue makes CiphertextBoundForChunkSize overflow
+        // to a negative bound and the ChunkPacketAssembler constructor throw ArgumentOutOfRangeException straight
+        // out of the receive loop (HandlePacketAsync is not wrapped — only MessageCodec.Decode is), and any large
+        // -but-not-overflowing value re-opens the very allocation ceiling this line exists to close. The fix is a
+        // range check at manifest admission, which is a change to what manifests are *accepted* and so wants its
+        // own review rather than riding along with a default-value change. Tracked in wiki/synthesis/roadmap.md.
+        //
+        // minFragmentBytes comes from THIS session's datagram budget rather than the shipped default, so a
+        // session running on a non-default budget gets a packet-count bound derived from its own arithmetic.
         _chunkAssembler = new ChunkPacketAssembler(
-            ChunkPacketAssembler.CiphertextBoundForChunkSize(maxChunkSize));
+            ChunkPacketAssembler.CiphertextBoundForChunkSize(maxChunkSize),
+            minFragmentBytes: ChunkPacketAssembler.MinFragmentBytesFor(_maxDatagramPayloadBytes));
 
         // Start only the SESSION-level clock here. Deliberately NOT a per-file clock: the sender carousels files
         // sequentially, so seeding every file's timer at manifest time made file 1's valve open one threshold
@@ -710,10 +766,10 @@ public sealed class ReceiverSession
     /// packet lifts this scalar watermark over a range the carousel never actually sent — so
     /// <c>index &lt;= watermark ⇒ has been transmitted</c> does not strictly hold. Reachable only via asymmetric
     /// false-idle across receivers, and bounded by <see cref="RepairOptions.MaxRequestsPerPass"/>. Deliberately
-    /// not fixed: at the 8 KiB default chunk size <i>every</i> chunk travels as <see cref="ChunkPacketMessage"/>,
-    /// so gating the watermark lift on <paramref name="fromCarousel"/> would buy nothing. The ambiguity is
-    /// structural (it is the same property that makes cross-round accumulation work); the per-pass cap is the
-    /// right mitigation.</para>
+    /// not fixed: at every shipped chunk size <i>every</i> chunk travels as <see cref="ChunkPacketMessage"/> (this
+    /// was true at the old 8 KiB default and is more so at 256 KiB, where a chunk is ~312 wire packets), so gating
+    /// the watermark lift on <paramref name="fromCarousel"/> would buy nothing. The ambiguity is structural (it is
+    /// the same property that makes cross-round accumulation work); the per-pass cap is the right mitigation.</para>
     /// </param>
     /// <summary>
     /// True when any file with a higher index has started arriving. Because <c>RunChunkCarouselAsync</c> sends
@@ -743,8 +799,10 @@ public sealed class ReceiverSession
         // the first arrival is necessarily a REPAIR reply, and it lands here as firstForFile, setting the timer
         // and so closing the valve for one threshold. Recovery therefore proceeds in waves — up to
         // MaxRequestsPerPass x MaxChunksPerRequest (1,072 at the defaults) chunks, then a ~1 s pause — rather
-        // than continuously, adding roughly 10 s to fully recovering a 10,240-chunk file. That is pacing, not a
-        // stall: progress is strictly monotone, every wave is bounded, and spreading a whole-file recovery over
+        // than continuously. At the 8 KiB default this added roughly 10 s to fully recovering a 10,240-chunk
+        // file; at the 256 KiB default (M8) a file under 268 MB is fewer than 1,072 chunks, so a whole-file
+        // recovery now fits in a single wave and the pacing never engages at all. That is pacing, not a stall:
+        // progress is strictly monotone, every wave is bounded, and spreading a whole-file recovery over
         // seconds is arguably what you want from a receiver that just discovered it holds none of a file.
         if (fromCarousel || firstForFile)
             _carouselAdvancedAt[fileIndex] = _clock.UtcNow;

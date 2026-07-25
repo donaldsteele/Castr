@@ -2,6 +2,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using NSec.Cryptography;
+using Castr.Core.Chunking;
 using Castr.Core.Protocol;
 using Castr.Core.Transport;
 using Castr.Gui.Services;
@@ -30,8 +31,15 @@ public sealed partial class SendViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(StartCommand))]
     private string _filePath = "";
 
+    /// <summary>
+    /// Hash/repair granularity, 256 KiB — kept in step with <c>Castr.Cli.CastrPaths.DefaultChunkSize</c> and
+    /// <see cref="Castr.Core.Chunking.ChunkLayout.DefaultChunkSize"/> so all three surfaces ship the same default.
+    /// See the CastrPaths comment for the measured rationale (1.33x over the previous 8192). The view's
+    /// NumericUpDown bound must stay above this or it silently clamps the default back down — it was 60000,
+    /// which would have made this change invisible on this surface.
+    /// </summary>
     [ObservableProperty]
-    private int _chunkSize = 8192;
+    private int _chunkSize = ChunkLayout.DefaultChunkSize;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(StartCommand))]

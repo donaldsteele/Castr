@@ -34,6 +34,8 @@ public sealed class CastrClusterFixture : IAsyncLifetime
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CASTR_E2E")) || !DockerAvailability.IsAvailable)
             return;
 
+        ConfigureDockerEndpoint();
+
         var publishDir = PublishCli();
         StageDockerfile(publishDir);
 
@@ -61,12 +63,50 @@ public sealed class CastrClusterFixture : IAsyncLifetime
         // The image is intentionally left cached (WithCleanUp(false)) to keep reruns fast.
     }
 
+    /// <summary>
+    /// Points Testcontainers at the Docker Desktop <c>desktop-linux</c> named pipe when nothing else has chosen
+    /// an endpoint.
+    ///
+    /// <para>Without this, Testcontainers probes the legacy <c>docker_engine</c> pipe, which does not exist when
+    /// the active context is <c>desktop-linux</c>, and <b>hangs indefinitely rather than failing</b> — observed as
+    /// ~20 minute runs with zero Docker activity.</para>
+    ///
+    /// <para>It has to be set here, in-process, rather than by exporting <c>DOCKER_HOST</c>: the docker CLI and
+    /// Docker.DotNet disagree on how many slashes an npipe URI takes (the CLI accepts only
+    /// <c>npipe:////./pipe/...</c>, Docker.DotNet only <c>npipe://./pipe/...</c>), and
+    /// <see cref="DockerAvailability"/> shells out to the CLI to decide whether to skip — so any single exported
+    /// value breaks one of the two. Setting it after that probe has its own value scopes the workaround to this
+    /// test process. The earlier fix for this was a machine-global <c>~/.testcontainers.properties</c>, which
+    /// changed Docker resolution for every Testcontainers project on the host and was invisible from the repo.</para>
+    ///
+    /// <para>Deliberately does not override an endpoint the environment already specifies, so CI and Linux hosts
+    /// (where the default unix socket is correct) are unaffected.</para>
+    /// </summary>
+    private static void ConfigureDockerEndpoint()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOCKER_HOST")))
+            return;
+
+        const string desktopLinuxPipe = "npipe://./pipe/dockerDesktopLinuxEngine";
+        if (File.Exists(@"\\.\pipe\dockerDesktopLinuxEngine"))
+            Environment.SetEnvironmentVariable("DOCKER_HOST", desktopLinuxPipe);
+    }
+
     /// <summary>Publishes Castr.Cli as a self-contained single-file linux-x64 binary and returns the output directory.</summary>
     private static string PublishCli()
     {
         var repoRoot = FindRepoRoot();
         var csproj = Path.Combine(repoRoot, "src", "Castr.Cli", "Castr.Cli.csproj");
-        var outDir = Path.Combine(Path.GetTempPath(), "castr-e2e-publish");
+
+        // Per-repo-root output directory. This was a single fixed %TEMP%/castr-e2e-publish shared by every
+        // worktree and branch on the machine, and `dotnet publish -o` does not clean its target — so files from
+        // an unrelated branch (stale .pdbs were observed) accumulated in the Docker build context. The `castr`
+        // binary itself is always republished, so this was not a correctness hazard, but a per-root directory
+        // removes the class rather than the instance.
+        var outDir = Path.Combine(
+            Path.GetTempPath(), "castr-e2e-publish", StableDirectoryToken(repoRoot));
         Directory.CreateDirectory(outDir);
 
         var args =
@@ -92,6 +132,17 @@ public sealed class CastrClusterFixture : IAsyncLifetime
             throw new InvalidOperationException($"Publish did not produce the expected 'castr' binary at {binary}.");
 
         return outDir;
+    }
+
+    /// <summary>
+    /// A short, filesystem-safe, stable token for an absolute path, so each worktree/branch gets its own publish
+    /// directory. Content-addressed rather than a sanitised path so the name stays short and collision-free.
+    /// </summary>
+    private static string StableDirectoryToken(string path)
+    {
+        var hash = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(path.ToLowerInvariant()));
+        return Convert.ToHexString(hash)[..12].ToLowerInvariant();
     }
 
     /// <summary>Copies the checked-in Dockerfile into the publish (build-context) directory as 'Dockerfile'.</summary>

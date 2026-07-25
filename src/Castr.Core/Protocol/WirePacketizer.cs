@@ -12,8 +12,11 @@ namespace Castr.Core.Protocol;
 ///
 /// This is a purely post-encryption, post-encode transport concern: it operates on opaque encoded-message
 /// bytes and knows nothing about encryption, Merkle proofs, or chunk semantics. A message that already fits
-/// in one datagram is returned verbatim (no wrapper), so small messages — including the 8 KB default chunk —
-/// travel over the wire byte-for-byte as before. Loss of any fragment simply means the logical message never
+/// in one datagram is returned verbatim (no wrapper), so small messages travel over the wire byte-for-byte as
+/// before. Note chunks are not among them at any shipped chunk size: <see cref="ChunkPacketizer"/> has already
+/// split a chunk into per-datagram <c>ChunkPacketMessage</c>s before this type sees anything, which is why the
+/// default chunk size (256 KiB since M8) is free to exceed the datagram budget by orders of magnitude. Loss of
+/// any fragment simply means the logical message never
 /// reassembles; for a chunk that leaves the chunk incomplete, and the existing chunk-level repair path
 /// (CHUNK_REQUEST) re-requests the whole chunk — no packet-level NACK/retry machinery is needed.
 /// </summary>
