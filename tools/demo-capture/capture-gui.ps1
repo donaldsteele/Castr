@@ -57,8 +57,15 @@ $hSenderWin = (Get-Process -Id $pSender.Id).MainWindowHandle
 $hRecvWin = (Get-Process -Id $pRecv.Id).MainWindowHandle
 Write-Output "sender handle=$hSenderWin recv handle=$hRecvWin"
 
-Set-WindowRect -Handle $hSenderWin -X 10  -Y 20 -W 760 -H 560 | Out-Null
-Set-WindowRect -Handle $hRecvWin   -X 800 -Y 20 -W 760 -H 560 | Out-Null
+# The two windows must sit flush: the capture is a full-screen ddagrab, so any gap between them shows
+# whatever is on the desktop behind, and that lands in the GIF. Windows reports a rect ~7px wider and
+# taller than the pixels actually painted (the invisible DWM drop-shadow), so tiling at X=800 - the
+# sender's reported right edge of 770 plus a margin - left a visibly bleeding ~44px seam. Overlap by
+# the shadow width instead: sender's visible right edge is 10+760-7 = 763, so the receiver starts at
+# 763-7 = 756. See ConvertTo-Gif.ps1's -Crop for trimming the outer edge.
+$ShadowPx = 7
+Set-WindowRect -Handle $hSenderWin -X 10 -Y 20 -W 760 -H 560 | Out-Null
+Set-WindowRect -Handle $hRecvWin   -X (10 + 760 - (2 * $ShadowPx)) -Y 20 -W 760 -H 560 | Out-Null   # 756
 Start-Sleep -Milliseconds 500
 
 $rootSender = Get-AutomationRoot ([int]$hSenderWin)

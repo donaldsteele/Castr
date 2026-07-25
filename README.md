@@ -28,12 +28,19 @@ every raw measurement behind it.
 
 ## Status
 
-M0 (scaffolding) through M6 are complete: M5 shipped the showcase docs
-below, and M6 root-caused and fixed a real send/receive throughput
-bottleneck (see "See it in action" below and
-`wiki/synthesis/m6-throughput-pipelining.md`) — formal release automation
-(tag-triggered releases, checksums/signatures) remains open, tracked in
-`wiki/synthesis/roadmap.md`. Chunk payloads are ChaCha20-Poly1305-encrypted end-to-end and
+M0 (scaffolding) through M8 are complete. M5 shipped the showcase docs
+below; M6 root-caused and fixed a receiver-side throughput bottleneck
+(`wiki/synthesis/m6-throughput-pipelining.md`); M7 removed a self-inflicted
+repair storm that was sending the file roughly twice, cutting wire
+amplification from 2.39× to 1.13× and eliminating a burst/stall delivery
+pattern (`wiki/synthesis/m7-repair-amplification.md`); M8 raised the default
+chunk size to the 256 KB that `Castr.Core` and the wire protocol had
+specified all along. Throughput work is not finished — per-datagram syscall
+cost currently caps transfers near ~37 MB/s, and raising the datagram budget
+is the tracked next step. Formal release automation (tag-triggered releases,
+checksums/signatures) also remains open. Both are in
+`wiki/synthesis/roadmap.md`, and every measurement behind these claims is in
+`docs/benchmarks/throughput-runs.md`. Chunk payloads are ChaCha20-Poly1305-encrypted end-to-end and
 travel over MTU-safe wire packets (chunks split/reassembled below the
 crypto layer) — see `wiki/synthesis/m1.5-encryption-summary.md` and
 `wiki/synthesis/m3-test-ci-hardening-summary.md`.

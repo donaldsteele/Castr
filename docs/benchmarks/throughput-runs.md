@@ -748,3 +748,45 @@ Re-verified after the change, since it touches the reassembly path the loss test
 **441 passed / 3 skipped / 0 warnings** (up 2 from the new coverage), the `ChaosTransport` loss/reorder/
 duplication tests still passing **unmodified with no timeout changes**, and the Docker netem E2E tier
 re-run green on a **rebuilt** image.
+
+---
+
+## 2026-07-25 — Showcase demo re-capture (post-M8)
+
+Real screen captures of the shipped `Castr.Cli` / `Castr.Tui` / `Castr.Gui.Desktop` binaries on
+merged `main`, at the **shipped 256 KB default** — the capture scripts' previous
+`--chunk-size 60000` override was removed, since the new default is both better than that
+workaround and what a user actually gets. Timings read off the recordings.
+
+| Surface | File | Chunks | Receivers | Wall clock | Goodput |
+|---|---|---|---|---|---|
+| CLI | 60 MB | 240 | 1 | **~4 s** | ~15 MB/s |
+| TUI | 80 MB | 320 | 3 | **~10 s** | ~9.8 MB/s per receiver (dashboard-reported) |
+| GUI | 100 MB | 400 | 1 | **~10 s** | ~10 MB/s |
+
+Previous published figures were 6 s / 12 s / 28 s. **Do not read the deltas as pure M7+M8 gains** —
+the older captures were taken under unknown cache and machine state, which the page-cache confounder
+(~1.94×) and the multicast-group confounder (~1.8×) both make unsafe to compare against. The
+controlled A/B numbers earlier in this file are the defensible ones; these are what the artifacts
+show.
+
+The GUI is the surface that changed most, because it was the one still running at 8 KB chunks — its
+send view now shows `262144` in the chunk-size field, which is also the first end-to-end confirmation
+that M8's `MainWindow.axaml` `Maximum` fix works (the old cap of 60000 would have silently clamped
+the new default back down and made the change invisible).
+
+### Capture-tooling notes worth not rediscovering
+
+- `ddagrab` records the **whole screen**. Anything the demo windows do not cover lands in the GIF —
+  in a first pass that included an editor window with the session that was writing these very docs.
+  The capture scripts now tile the windows edge-to-edge and `ConvertTo-Gif.ps1` gained a `-Crop`
+  parameter to trim to their bounds.
+- **Tiling on `GetWindowRect` is not enough.** It reports 895×483 for a 94×22 console, but ~7 px per
+  side is invisible DWM drop-shadow rather than painted pixels, so windows placed "flush" by those
+  numbers leave a ~14 px seam of visible desktop between them. All three capture scripts now overlap
+  by the shadow width. This cost three re-records to work out; the arithmetic is in each script.
+- Verify a crop region by extracting one frame (`ffmpeg -ss <t> -i in.mp4 -frames:v 1 -vf crop=...`)
+  and **looking at it** before converting. Guessing the geometry wastes a full re-record.
+- Do not pipe `ConvertTo-Gif.ps1` through `2>&1` in PowerShell: ffmpeg writes its banner to stderr,
+  and combined with the script's `$ErrorActionPreference = 'Stop'` that aborts the run before ffmpeg
+  finishes, leaving the old GIF silently in place.

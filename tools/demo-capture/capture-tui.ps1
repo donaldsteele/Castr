@@ -20,7 +20,9 @@ foreach ($t in "CastrLab-Sender","CastrLab-01","CastrLab-02","CastrLab-03") {
 Start-Sleep -Milliseconds 500
 
 $recvArgsFor = { param($n) "receive --dest-dir `"$Root\receive$n`" --trust-store `"$Root\state\trust-lab$n.json`" --on-unknown-sender Deny --tui" }
-$sendArgs = "send `"$File`" --identity `"$Root\state\sender-identity.key`" --chunk-size 60000 --tui"
+# No --chunk-size: the demo should show the shipped default (see capture-cli.ps1 for why the old
+# explicit 60000 override is gone as of M8).
+$sendArgs = "send `"$File`" --identity `"$Root\state\sender-identity.key`" --tui"
 
 # 2x2 grid: sender top-left, receivers fill the rest. Cols/Lines fix the console geometry BEFORE
 # launch (mode con, inside Start-TitledConsole) so nothing resizes after Spectre.Console's LiveDisplay
@@ -36,9 +38,20 @@ $h1 = Find-WindowByTitle -TitleSubstring "CastrLab-01" -TimeoutSeconds 8
 $h2 = Find-WindowByTitle -TitleSubstring "CastrLab-02" -TimeoutSeconds 8
 $h3 = Find-WindowByTitle -TitleSubstring "CastrLab-03" -TimeoutSeconds 8
 
-Set-WindowPosition -Handle $h1 -X 915 -Y 10  | Out-Null
-Set-WindowPosition -Handle $h2 -X 10  -Y 503 | Out-Null
-Set-WindowPosition -Handle $h3 -X 915 -Y 503 | Out-Null
+# Flush 2x2 grid. The capture is a full-screen ddagrab, so ANY gap between windows shows whatever is
+# on the desktop behind them and that lands in the GIF - so the four consoles must tile exactly.
+#
+# The non-obvious part: GetWindowRect reports 895x483 for a 94x22 console at (10,10), but ~7px of
+# that on the left, right and bottom is the invisible DWM drop-shadow, not pixels the window paints.
+# Tiling on the GetWindowRect numbers therefore leaves a ~14px seam of visible desktop between
+# columns. Overlap by the shadow width instead: visible right edge is X+895-7, so the next column
+# starts at 10+895-7-7 = 891, and the next row at 10+483-7 = 486.
+$ShadowPx = 7
+$ColX = 10 + 895 - (2 * $ShadowPx)   # 891
+$RowY = 10 + 483 - $ShadowPx         # 486
+Set-WindowPosition -Handle $h1 -X $ColX -Y 10    | Out-Null
+Set-WindowPosition -Handle $h2 -X 10    -Y $RowY | Out-Null
+Set-WindowPosition -Handle $h3 -X $ColX -Y $RowY | Out-Null
 
 Start-Sleep -Milliseconds 500
 
