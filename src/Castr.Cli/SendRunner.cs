@@ -75,8 +75,13 @@ internal static class SendRunner
                 .PrepareFileAsync(options.FilePath, identity.SigningKey, options.ChunkSize, cancellationToken)
                 .ConfigureAwait(false);
 
-            await using IMulticastTransport transport =
-                new UdpMulticastTransport(options.Group, options.Port, interfaceAddress, options.MulticastLoopback);
+            // Multicast loopback stays on (a sender and a receiver on one box must still reach each other), so
+            // without DatagramFilters.Sender this socket would hand the app back every chunk datagram it just
+            // emitted — crowding the real CHUNK_REQUEST/JOIN_REQUEST control traffic out of the kernel buffer
+            // and the transport inbox. See Castr.Core.Protocol.DatagramFilters.
+            await using IMulticastTransport transport = new UdpMulticastTransport(
+                options.Group, options.Port, interfaceAddress, options.MulticastLoopback,
+                datagramFilter: DatagramFilters.Sender);
             var session = prepared.CreateSession(transport, options.SendWindowSize);
 
             if (options.UseTui)

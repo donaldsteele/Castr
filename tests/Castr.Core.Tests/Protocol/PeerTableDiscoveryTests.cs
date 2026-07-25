@@ -100,7 +100,11 @@ public class PeerTableDiscoveryTests
     {
         var table = new PeerTable();
         table.ObserveDiscovered(new Endpoint("discovered-peer", 5001), Epoch);
-        var coordinator = new RepairCoordinator(table, new FakeClock(Epoch));
+        // InitialRequestJitter off: this test is about which TARGET is picked, not about when the first request
+        // fires, and the shipped 500 ms jitter would otherwise defer the first plan and mask the ranking.
+        var coordinator = new RepairCoordinator(
+            table, new FakeClock(Epoch),
+            new RepairOptions(TimeSpan.FromSeconds(5), RetryJitterFraction: 0, InitialRequestJitter: TimeSpan.Zero));
 
         var plans = coordinator.PlanRepairs(fileIndex: 0, missingChunkIndices: [4], OriginalSender, NonceFactory);
 
@@ -115,7 +119,11 @@ public class PeerTableDiscoveryTests
         var table = new PeerTable();
         table.Observe(new PeerHaveMessage(Id16(), Id16(1), 0, [0b0001_0000], "gossip-peer", 5000), Epoch); // has chunk 4
         table.ObserveDiscovered(new Endpoint("discovered-peer", 5001), Epoch);
-        var coordinator = new RepairCoordinator(table, new FakeClock(Epoch));
+        // InitialRequestJitter off: this test is about which TARGET is picked, not about when the first request
+        // fires, and the shipped 500 ms jitter would otherwise defer the first plan and mask the ranking.
+        var coordinator = new RepairCoordinator(
+            table, new FakeClock(Epoch),
+            new RepairOptions(TimeSpan.FromSeconds(5), RetryJitterFraction: 0, InitialRequestJitter: TimeSpan.Zero));
 
         var plans = coordinator.PlanRepairs(0, [4], OriginalSender, NonceFactory);
 

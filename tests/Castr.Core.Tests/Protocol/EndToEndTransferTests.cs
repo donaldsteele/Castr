@@ -19,6 +19,27 @@ public class EndToEndTransferTests
 {
     private static readonly TimeSpan OverallTimeout = TimeSpan.FromSeconds(15);
 
+    // These receivers run on SystemClock.Instance rather than a FakeClock. They are already real-time tests (they
+    // poll until completion against OverallTimeout), and the FakeClock they used to be given was constructed at
+    // UtcNow and then never advanced — so it measured nothing, while the repair path legitimately depends on wall
+    // clock progressing: the carousel-idle valve and the randomized first-request jitter are both wall-clock, by
+    // design (see RepairOptions.InitialRequestJitter for why counting repair passes instead was wrong). A frozen
+    // clock therefore froze repair. Real clock here exercises the shipped behavior; the clock-sensitive logic
+    // itself is unit-tested deterministically with FakeClock in RepairCoordinatorTests.
+    //
+    // The repair-dependent tests additionally inject NoJitterCoordinator(): on a real clock they would otherwise
+    // depend on wall-clock jitter they do not test, spending 0-500 ms of their own budget on a randomized
+    // first-request delay. Zeroing it restores the timing headroom without touching any assertion.
+
+    /// <summary>
+    /// A coordinator with both randomized timing sources off, for tests whose subject is repair <i>recovery</i>
+    /// rather than repair <i>scheduling</i>. Keeps their margins governed by the assertion under test instead of
+    /// by a draw from <see cref="Random.Shared"/>.
+    /// </summary>
+    private static RepairCoordinator NoJitterCoordinator() => new(
+        new PeerTable(), SystemClock.Instance,
+        new RepairOptions(TimeSpan.FromSeconds(5), RetryJitterFraction: 0, InitialRequestJitter: TimeSpan.Zero));
+
     [Fact]
     public async Task HappyPath_SingleReceiver_NoLoss_ReceivesByteIdenticalFile()
     {
@@ -34,7 +55,7 @@ public class EndToEndTransferTests
         var trustStore = TrustedStoreFor(key);
         var (sink, sinkFactory) = MemorySinkFactory();
         var receiver = new ReceiverSession(
-            ReceiverId(1), trustStore, receiverTransport, new FakeClock(DateTimeOffset.UtcNow),
+            ReceiverId(1), trustStore, receiverTransport, SystemClock.Instance,
             new ReceiverSessionOptions("/virtual-root"), sinkFactory);
 
         await RunUntilCompleteAsync(sender, receiver);
@@ -61,7 +82,7 @@ public class EndToEndTransferTests
             sinks.Add(sink);
             receivers.Add(new ReceiverSession(
                 ReceiverId((byte)(10 + i)), TrustedStoreFor(key), network.CreateMulticastTransport(new Endpoint($"r{i}", 1)),
-                new FakeClock(DateTimeOffset.UtcNow), new ReceiverSessionOptions("/root"), sinkFactory));
+                SystemClock.Instance, new ReceiverSessionOptions("/root"), sinkFactory));
         }
 
         await RunUntilAllCompleteAsync(sender, receivers);
@@ -83,7 +104,7 @@ public class EndToEndTransferTests
         var (_, sinkFactory) = MemorySinkFactory();
         var receiver = new ReceiverSession(
             ReceiverId(1), new InMemoryTrustStore() /* sender key never trusted */, network.CreateMulticastTransport(new Endpoint("r", 1)),
-            new FakeClock(DateTimeOffset.UtcNow), new ReceiverSessionOptions("/root", UnknownSenderPolicy.Deny), sinkFactory);
+            SystemClock.Instance, new ReceiverSessionOptions("/root", UnknownSenderPolicy.Deny), sinkFactory);
 
         TrustDecision? denial = null;
         receiver.SenderTrustDenied += (decision, _) => denial = decision;
@@ -117,8 +138,8 @@ public class EndToEndTransferTests
 
         var (sink, sinkFactory) = MemorySinkFactory();
         var receiver = new ReceiverSession(
-            ReceiverId(1), TrustedStoreFor(key), corruptingTransport, new FakeClock(DateTimeOffset.UtcNow),
-            new ReceiverSessionOptions("/root"), sinkFactory);
+            ReceiverId(1), TrustedStoreFor(key), corruptingTransport, SystemClock.Instance,
+            new ReceiverSessionOptions("/root"), sinkFactory, repairCoordinator: NoJitterCoordinator());
 
         // No second party holds the un-tampered chunk 2 in this scenario, so repair must fall back to
         // re-requesting from the original sender — and the sender's own carousel copy was never tampered.
@@ -152,8 +173,8 @@ public class EndToEndTransferTests
 
         var (sink, sinkFactory) = MemorySinkFactory();
         var receiver = new ReceiverSession(
-            ReceiverId(1), TrustedStoreFor(key), swappingTransport, new FakeClock(DateTimeOffset.UtcNow),
-            new ReceiverSessionOptions("/root"), sinkFactory);
+            ReceiverId(1), TrustedStoreFor(key), swappingTransport, SystemClock.Instance,
+            new ReceiverSessionOptions("/root"), sinkFactory, repairCoordinator: NoJitterCoordinator());
 
         await RunUntilCompleteAsync(sender, receiver, extraRepairRounds: true);
 
@@ -181,8 +202,8 @@ public class EndToEndTransferTests
 
         var (sink, sinkFactory) = MemorySinkFactory();
         var receiver = new ReceiverSession(
-            ReceiverId(1), TrustedStoreFor(key), swappingTransport, new FakeClock(DateTimeOffset.UtcNow),
-            new ReceiverSessionOptions("/root"), sinkFactory);
+            ReceiverId(1), TrustedStoreFor(key), swappingTransport, SystemClock.Instance,
+            new ReceiverSessionOptions("/root"), sinkFactory, repairCoordinator: NoJitterCoordinator());
 
         await RunUntilCompleteAsync(sender, receiver, extraRepairRounds: true);
 
@@ -209,7 +230,7 @@ public class EndToEndTransferTests
         var (sinkB, sinkFactoryB) = MemorySinkFactory();
         var receiverB = new ReceiverSession(
             ReceiverId(2), TrustedStoreFor(key), network.CreateMulticastTransport(new Endpoint("b", 1)),
-            new FakeClock(DateTimeOffset.UtcNow), new ReceiverSessionOptions("/root"), sinkFactoryB);
+            SystemClock.Instance, new ReceiverSessionOptions("/root"), sinkFactoryB);
 
         // Receiver A deterministically misses chunk index 3 of the carousel (simulated packet loss).
         var rawTransportA = network.CreateMulticastTransport(new Endpoint("a", 1));
@@ -217,8 +238,8 @@ public class EndToEndTransferTests
             message is not ChunkDataMessage { ChunkIndex: 3 });
         var (sinkA, sinkFactoryA) = MemorySinkFactory();
         var receiverA = new ReceiverSession(
-            ReceiverId(1), TrustedStoreFor(key), lossyTransportA, new FakeClock(DateTimeOffset.UtcNow),
-            new ReceiverSessionOptions("/root"), sinkFactoryA);
+            ReceiverId(1), TrustedStoreFor(key), lossyTransportA, SystemClock.Instance,
+            new ReceiverSessionOptions("/root"), sinkFactoryA, repairCoordinator: NoJitterCoordinator());
 
         await RunUntilAllCompleteAsync(sender, [receiverA, receiverB], extraRepairRounds: true);
 
@@ -245,7 +266,7 @@ public class EndToEndTransferTests
         var (sink, sinkFactory) = MemorySinkFactory();
         var receiver = new ReceiverSession(
             ReceiverId(1), TrustedStoreFor(key), network.CreateMulticastTransport(new Endpoint("receiver", 1)),
-            new FakeClock(DateTimeOffset.UtcNow), new ReceiverSessionOptions("/root"), sinkFactory);
+            SystemClock.Instance, new ReceiverSessionOptions("/root"), sinkFactory);
 
         await RunUntilCompleteAsync(sender, receiver);
 

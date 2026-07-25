@@ -326,9 +326,14 @@ public static class MessageCodec
 
     private static void WriteInt32Array(Stream stream, int[] values)
     {
-        // UInt32 count prefix, not UInt16: a repair batch (ChunkRequestMessage.ChunkIndices) can
-        // legitimately exceed 65,535 entries for a large file requested in bulk from the sender before
-        // any peer has announced chunks — a UInt16 cap here overflows in that realistic scenario.
+        // UInt32 count prefix, not UInt16. Historically this was because a repair batch
+        // (ChunkRequestMessage.ChunkIndices) could exceed 65,535 entries for a large file requested in bulk from
+        // the sender before any peer had announced chunks. RepairOptions.MaxChunksPerRequest now caps a planned
+        // repair request at ~268 indices so it always fits one datagram, so that specific overflow no longer
+        // arises from Castr's own planner — but the width stays UInt32 deliberately: it is a wire-format
+        // property (narrowing it would be a breaking change), the cap is a policy of the sending side rather
+        // than a guarantee about what arrives, and ChunkPullRequestMessage shares this writer over TCP where no
+        // datagram budget applies at all.
         WriteUInt32(stream, checked((uint)values.Length));
         foreach (var value in values)
             WriteInt32(stream, value);

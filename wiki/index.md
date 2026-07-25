@@ -35,6 +35,7 @@ When this file exceeds ~300 lines or the wiki passes ~150 pages, shard into `wik
 - [[m3-test-ci-hardening-summary]] — M3 complete: real chunk/wire-packet split, Testcontainers E2E fan-out (real netem loss), security test pass, macOS CI multicast bug found+fixed (broken since M1), Tui flaky-test fix; 295 tests; QA PASS.
 - [[m4-mobile-summary]] — M4 complete: TCP unicast swarm-pull tier + native mDNS discovery, Android/iOS GUI heads (real APK/Xcode CI verification), a real Merkle position-relabeling defect found+fixed in the M1-era primitive, libsodium iOS-Simulator gap and view-model duplication documented; 359 tests.
 - [[m6-throughput-pipelining]] — M6 complete: root-caused the ~1.6-2.4 MB/s demo-plateau to receiver-side serialization (not sender-side, round 1's first guess); fixed via a channel-decoupled receive loop + explicit socket buffers; three rounds, two independent QA+systems-design reviews; 367 tests.
+- [[m7-repair-amplification]] — M7 (not merged): repair-storm bounding, PEER_HAVE coalescing, sender own-echo filter. Wire amplification 2.4x → 1.1x and the periodic stall gone; the "+112.6% goodput" claim was **withdrawn** as degraded-host recovery. Round 1 QA FAIL on a reproduced liveness hang (global carousel-idle timer); 431 tests.
 
 ## Documentation outside the wiki
 
