@@ -4,7 +4,7 @@ title: "Castr"
 tags: [decision]
 sources: [castr-project-plan]
 created: 2026-07-24
-updated: 2026-07-24
+updated: 2026-07-25
 graph:
   node_id: product:castr
   node_type: product
@@ -23,7 +23,7 @@ A cross-platform LAN multicast file transfer tool: a trusted sender broadcasts a
 
 ## Architecture
 
-The two load-bearing designs are the [[wire-protocol]] (how a file gets from sender to many receivers in one send) and the [[repair-protocol]] (how gaps get filled by peers instead of re-burdening the sender). Both sit on top of the [[security-model]] (Ed25519 trust + BLAKE3 chunk integrity, no payload encryption).
+The two load-bearing designs are the [[wire-protocol]] (how a file gets from sender to many receivers in one send) and the [[repair-protocol]] (how gaps get filled by peers instead of re-burdening the sender). Both sit on top of the [[security-model]] (Ed25519 trust + BLAKE3 chunk integrity + **ChaCha20-Poly1305 payload encryption**, with the Merkle tree built over ciphertext hashes). Note this reverses the original plan's "no payload encryption" call, which was a mistake — LAN multicast traffic is visible to every device on the segment, not just those the receiver has chosen to trust, so plaintext payloads leaked regardless of the sender/receiver trust relationship. See [[adr-0003-payload-encryption]] for the reversal and [[m1.5-encryption-summary]] for the implementation.
 
 ## Why mobile is architecturally different
 
