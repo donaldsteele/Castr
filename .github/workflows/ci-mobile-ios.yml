@@ -34,6 +34,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The .NET 10 iOS workload pack currently requires Xcode 26.6; macos-latest's default active Xcode was
+      # observed to be 26.5 (verified via a real failing CI run: NETSDK error "requires Xcode 26.6 ... current
+      # version of Xcode is 26.5"). GitHub's macOS images typically carry more than one Xcode side by side
+      # under /Applications, just not selected by default — select 26.6 explicitly if present.
+      - name: Select Xcode 26.6
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.6'
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
