@@ -82,7 +82,12 @@ internal static class ReceiveRunner
             var session = new ReceiverSession(
                 receiverId, trustStore, transport, SystemClock.Instance, sessionOptions,
                 sinkFactory: (path, length) => new FileSystemFileSink(path, length),
-                trustPrompt: trustPrompt);
+                trustPrompt: trustPrompt,
+                // BENCH (temporary M7 instrumentation): -1 unless CASTR_BENCH_MAXDGRAM is set, so this is
+                // WirePacketizer.DefaultMaxDatagramPayload in every normal run.
+                maxDatagramPayloadBytes: Castr.Core.Diagnostics.BenchMetrics.MaxDatagramOverride > 0
+                    ? Castr.Core.Diagnostics.BenchMetrics.MaxDatagramOverride
+                    : WirePacketizer.DefaultMaxDatagramPayload);
 
             session.SenderTrustDenied += (decision, senderId) =>
             {
@@ -133,12 +138,20 @@ internal static class ReceiveRunner
 
     private static async Task RunRepairLoopAsync(ReceiverSession session, CancellationToken token)
     {
+        // BENCH (temporary M7 instrumentation): both default to the shipped values (0 / 250), so this is
+        // shipped behavior unless CASTR_BENCH_REPAIR_START_MS / CASTR_BENCH_REPAIR_PERIOD_MS are set. Used to
+        // A/B the repair loop's contribution to wire amplification.
+        int startMs = int.TryParse(Environment.GetEnvironmentVariable("CASTR_BENCH_REPAIR_START_MS"), out var s) ? s : 0;
+        int periodMs = int.TryParse(Environment.GetEnvironmentVariable("CASTR_BENCH_REPAIR_PERIOD_MS"), out var p) ? p : 250;
         try
         {
+            // Polled rather than one long Delay so a completed transfer still ends this task promptly.
+            for (int waited = 0; waited < startMs && !token.IsCancellationRequested && !session.IsComplete; waited += 100)
+                await Task.Delay(100, token).ConfigureAwait(false);
             while (!token.IsCancellationRequested && !session.IsComplete)
             {
                 await session.RequestRepairsAsync(token).ConfigureAwait(false);
-                await Task.Delay(250, token).ConfigureAwait(false);
+                await Task.Delay(periodMs, token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)

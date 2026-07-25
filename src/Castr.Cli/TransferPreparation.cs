@@ -17,7 +17,13 @@ internal sealed record PreparedTransfer(
 {
     public SenderSession CreateSession(
         Castr.Core.Transport.IMulticastTransport transport, int sendWindowSize = SenderSession.DefaultSendWindowSize) =>
-        new(Signed, Sources, Trees, transport, SenderEncryptionKey, ContentKey, sendWindowSize: sendWindowSize);
+        new(Signed, Sources, Trees, transport, SenderEncryptionKey, ContentKey,
+            // BENCH (temporary M7 instrumentation): MaxDatagramOverride is -1 unless CASTR_BENCH_MAXDGRAM is
+            // set, so this is WirePacketizer.DefaultMaxDatagramPayload in every normal run.
+            maxDatagramPayloadBytes: Castr.Core.Diagnostics.BenchMetrics.MaxDatagramOverride > 0
+                ? Castr.Core.Diagnostics.BenchMetrics.MaxDatagramOverride
+                : WirePacketizer.DefaultMaxDatagramPayload,
+            sendWindowSize: sendWindowSize);
 
     public void Dispose()
     {

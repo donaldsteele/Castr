@@ -1,5 +1,6 @@
 using NSec.Cryptography;
 using Castr.Core.Chunking;
+using Castr.Core.Diagnostics; // BENCH (temporary M7 instrumentation)
 using Castr.Core.Manifest;
 using Castr.Core.Security;
 using Castr.Core.Swarm;
@@ -126,6 +127,8 @@ public sealed class SenderSession(
         await SendAnnounceAsync(cancellationToken).ConfigureAwait(false);
         await SendManifestAsync(cancellationToken).ConfigureAwait(false);
 
+        BenchMetrics.StartSampling(() => Interlocked.Read(ref _sentBytes)); // BENCH
+        BenchMetrics.Mark("manifest-sent"); // BENCH
         var carousel = RunChunkCarouselAsync(cancellationToken);
         var requestHandler = HandleIncomingAsync(cancellationToken);
         await Task.WhenAll(carousel, requestHandler).ConfigureAwait(false);
@@ -147,7 +150,11 @@ public sealed class SenderSession(
     private async Task SendMessageAsync(object message, CancellationToken ct)
     {
         foreach (var datagram in WirePacketizer.Fragment(MessageCodec.Encode(message), maxDatagramPayloadBytes))
+        {
+            var t = BenchMetrics.Now(); // BENCH
             await transport.SendAsync(datagram, ct).ConfigureAwait(false);
+            BenchMetrics.AddStage(BenchMetrics.Stage.SenderSocketSend, t); // BENCH
+        }
     }
 
     /// <summary>
@@ -193,6 +200,7 @@ public sealed class SenderSession(
 
         lock (_progressGate)
             _carouselComplete = true;
+        BenchMetrics.Mark("carousel-complete", Interlocked.Read(ref _sentBytes)); // BENCH
         EmitProgress(TransferPhase.Serving);
     }
 
@@ -230,9 +238,12 @@ public sealed class SenderSession(
         // _sendWindowSize's doc comment for the known, deliberately-not-fixed double-counting limitation that
         // follows from that).
         var sendOptions = new ParallelOptions { MaxDegreeOfParallelism = _sendWindowSize, CancellationToken = ct };
+        var tServe = BenchMetrics.Now(); // BENCH
         await Parallel.ForEachAsync(request.ChunkIndices, sendOptions, async (chunkIndex, token) =>
             await SendChunkAsync(request.FileIndex, chunkIndex, source, tree, request.RequestNonce, token).ConfigureAwait(false))
             .ConfigureAwait(false);
+        BenchMetrics.AddStage(BenchMetrics.Stage.SenderRepairServe, tServe); // BENCH
+        BenchMetrics.Mark("repair-served", request.ChunkIndices.Length); // BENCH
     }
 
     private async Task HandleJoinRequestAsync(JoinRequestMessage join, CancellationToken ct)
@@ -268,9 +279,15 @@ public sealed class SenderSession(
     private async Task SendChunkAsync(int fileIndex, int chunkIndex, IFileSource source, MerkleTree tree, byte[]? requestNonce, CancellationToken ct)
     {
         var file = signedManifest.Manifest.Files[fileIndex];
+        var tRead = BenchMetrics.Now(); // BENCH
         var plaintext = await Chunker.ReadChunkAsync(source, file.ChunkSize, chunkIndex, ct).ConfigureAwait(false);
+        BenchMetrics.AddStage(BenchMetrics.Stage.SenderChunkRead, tRead); // BENCH
+        var tEnc = BenchMetrics.Now(); // BENCH
         var ciphertext = contentKey.EncryptChunk(signedManifest.Manifest.SessionId, fileIndex, chunkIndex, plaintext);
+        BenchMetrics.AddStage(BenchMetrics.Stage.SenderEncrypt, tEnc); // BENCH
+        var tProof = BenchMetrics.Now(); // BENCH
         var proof = tree.GetProof(chunkIndex);
+        BenchMetrics.AddStage(BenchMetrics.Stage.SenderProof, tProof); // BENCH
 
         // A chunk whose whole envelope fits in one datagram goes as a single ChunkDataMessage/ChunkResponseMessage
         // (unchanged wire behavior). A larger chunk is split into identity-keyed ChunkPacketMessage wire packets

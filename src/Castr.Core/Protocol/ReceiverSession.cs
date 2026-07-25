@@ -1,5 +1,6 @@
 using NSec.Cryptography;
 using Castr.Core.Chunking;
+using Castr.Core.Diagnostics; // BENCH (temporary M7 instrumentation)
 using Castr.Core.Manifest;
 using Castr.Core.Security;
 using Castr.Core.Swarm;
@@ -121,20 +122,31 @@ public sealed class ReceiverSession
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         EmitProgress();
+        BenchMetrics.StartSampling(() => Interlocked.Read(ref _verifiedBytes)); // BENCH
         await foreach (var packet in _transport.ReceiveAsync(cancellationToken).ConfigureAwait(false))
         {
             // Reassemble MTU-safe wire packets back into a whole message before decoding; a chunk that is
             // still missing fragments simply never surfaces here and stays "not received" until repair.
+            var t0 = BenchMetrics.Now(); // BENCH
             var payload = _reassembler.Offer(packet.Payload);
+            BenchMetrics.AddStage(BenchMetrics.Stage.Reassemble, t0); // BENCH
             if (payload is null)
+            {
+                BenchMetrics.OnReassemblyIncomplete(); // BENCH
                 continue;
+            }
 
+            var tGate = BenchMetrics.Now(); // BENCH
             await _stateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            BenchMetrics.AddStage(BenchMetrics.Stage.GateWait, tGate); // BENCH
             try
             {
                 await HandlePacketAsync(payload, cancellationToken).ConfigureAwait(false);
                 if (IsComplete)
+                {
+                    BenchMetrics.Mark("receive-complete", Interlocked.Read(ref _verifiedBytes)); // BENCH
                     return;
+                }
             }
             finally
             {
@@ -158,7 +170,9 @@ public sealed class ReceiverSession
 
         // Held for the whole pass so it never observes _bitmaps/_contentKey/RepairCoordinator mid-mutation by
         // the concurrent RunAsync packet loop (see _stateGate).
+        var tRepair = BenchMetrics.Now(); // BENCH
         await _stateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        long benchRequested = 0, benchMessages = 0; // BENCH
         try
         {
             // Re-drive the content-key handshake until it succeeds: a single KEY_GRANT can be lost (it rides the
@@ -185,20 +199,26 @@ public sealed class ReceiverSession
                     var request = new ChunkRequestMessage(
                         Manifest.Manifest.SessionId, _receiverId, plan.RequestNonce, fileIndex, plan.ChunkIndices, "", 0);
                     await SendMessageAsync(request, cancellationToken).ConfigureAwait(false);
+                    benchRequested += plan.ChunkIndices.Length; // BENCH
+                    benchMessages++; // BENCH
                 }
             }
         }
         finally
         {
             _stateGate.Release();
+            BenchMetrics.AddStage(BenchMetrics.Stage.RepairPass, tRepair); // BENCH
+            BenchMetrics.OnRepairPass(benchRequested, benchMessages); // BENCH
         }
     }
 
     private async Task HandlePacketAsync(byte[] payload, CancellationToken ct)
     {
         object? decoded;
+        var tDecode = BenchMetrics.Now(); // BENCH
         try { decoded = MessageCodec.Decode(payload); }
         catch { return; }
+        finally { BenchMetrics.AddStage(BenchMetrics.Stage.Decode, tDecode); } // BENCH
 
         switch (decoded)
         {
@@ -312,9 +332,14 @@ public sealed class ReceiverSession
         if (!_bitmaps.TryGetValue(packet.FileIndex, out var bitmap)
             || packet.ChunkIndex < 0 || packet.ChunkIndex >= bitmap.ChunkCount
             || bitmap.Get(packet.ChunkIndex))
+        {
+            BenchMetrics.OnDuplicateChunkPacket(); // BENCH
             return; // unknown file, out-of-range chunk, or one we already have — drop stray/duplicate/bad packets
+        }
 
+        var tAsm = BenchMetrics.Now(); // BENCH
         var assembled = _chunkAssembler.Offer(packet);
+        BenchMetrics.AddStage(BenchMetrics.Stage.ChunkAssemble, tAsm); // BENCH
         if (assembled is not { } complete)
             return; // still missing packets — the chunk stays "not received" until repair fills the gaps
 
@@ -343,35 +368,50 @@ public sealed class ReceiverSession
             return;
 
         var file = Manifest.Manifest.Files[fileIndex];
+        var tVerify = BenchMetrics.Now(); // BENCH
         var ciphertextHash = ChunkHash.Compute(ciphertext);
-        if (!ManifestVerifier.VerifyChunk(file.MerkleRoot, ciphertextHash, proof))
+        bool verified = ManifestVerifier.VerifyChunk(file.MerkleRoot, ciphertextHash, proof);
+        BenchMetrics.AddStage(BenchMetrics.Stage.MerkleVerify, tVerify); // BENCH
+        if (!verified)
             return; // corrupt or spoofed ciphertext — silently drop; repair will re-request it from someone else
 
+        var tBook = BenchMetrics.Now(); // BENCH
         bitmap.Set(chunkIndex);
-        _verifiedBytes += ChunkLayout.GetRange(file.Size, file.ChunkSize, chunkIndex).Length;
+        // BENCH: Interlocked so the 100 ms time-series sampler can read this off-thread without tearing.
+        Interlocked.Add(ref _verifiedBytes, ChunkLayout.GetRange(file.Size, file.ChunkSize, chunkIndex).Length);
         _chunkCache[(fileIndex, chunkIndex)] = (ciphertext, proof); // cached as ciphertext, for peer repair relay
         _repairCoordinator.MarkFulfilled(fileIndex, chunkIndex);
         _pendingDecrypt.Add((fileIndex, chunkIndex));
+        BenchMetrics.AddStage(BenchMetrics.Stage.Bookkeeping, tBook); // BENCH
+        BenchMetrics.OnChunkVerified(); // BENCH
 
         // Decrypt-and-write now if we already hold the content key; otherwise it stays pending until KEY_GRANT.
         if (_contentKey is not null)
             await DecryptWriteAndTrackAsync(fileIndex, chunkIndex, ct).ConfigureAwait(false);
 
+        var tHave = BenchMetrics.Now(); // BENCH
         await BroadcastPeerHaveAsync(fileIndex, ct).ConfigureAwait(false);
+        BenchMetrics.AddStage(BenchMetrics.Stage.PeerHave, tHave); // BENCH
 
+        var tProg = BenchMetrics.Now(); // BENCH
         EmitProgress();
+        BenchMetrics.AddStage(BenchMetrics.Stage.ProgressEmit, tProg); // BENCH
     }
 
     private async Task DecryptWriteAndTrackAsync(int fileIndex, int chunkIndex, CancellationToken ct)
     {
         var (ciphertext, _) = _chunkCache[(fileIndex, chunkIndex)];
+        var tDecrypt = BenchMetrics.Now(); // BENCH
         var plaintext = _contentKey!.TryDecryptChunk(Manifest!.Manifest.SessionId, fileIndex, chunkIndex, ciphertext);
+        BenchMetrics.AddStage(BenchMetrics.Stage.Decrypt, tDecrypt); // BENCH
         if (plaintext is null)
             return; // Merkle-valid ciphertext that fails AEAD should not happen with the right key; leave pending.
 
         var file = Manifest.Manifest.Files[fileIndex];
         var range = ChunkLayout.GetRange(file.Size, file.ChunkSize, chunkIndex);
+        var tWrite = BenchMetrics.Now(); // BENCH
         await _sinks[fileIndex].WriteAsync(range.Offset, plaintext, ct).ConfigureAwait(false);
+        BenchMetrics.AddStage(BenchMetrics.Stage.DiskWrite, tWrite); // BENCH
         _pendingDecrypt.Remove((fileIndex, chunkIndex));
 
         if (_bitmaps[fileIndex].IsComplete
@@ -412,8 +452,23 @@ public sealed class ReceiverSession
         }
     }
 
+    private long _benchPeerHaveTick; // BENCH: counts calls, for the CASTR_BENCH_PEERHAVE_EVERY throttle experiment
+
     private async Task BroadcastPeerHaveAsync(int fileIndex, CancellationToken ct)
     {
+        // BENCH (temporary M7 experiment): tests the "PEER_HAVE amplification" hypothesis by broadcasting only
+        // every n-th verified chunk. PeerHaveEvery is 1 unless CASTR_BENCH_PEERHAVE_EVERY says otherwise, so
+        // this is shipped behavior in every normal run.
+        if (BenchMetrics.Enabled && BenchMetrics.PeerHaveEvery != 1)
+        {
+            long tick = ++_benchPeerHaveTick; // always under _stateGate, so no interlocked needed
+            if (BenchMetrics.PeerHaveEvery == 0 || tick % BenchMetrics.PeerHaveEvery != 0)
+            {
+                BenchMetrics.OnPeerHaveSuppressed();
+                return;
+            }
+        }
+
         var message = new PeerHaveMessage(
             Manifest!.Manifest.SessionId, _receiverId, fileIndex, _bitmaps[fileIndex].ToBytes(), "", 0);
         await SendMessageAsync(message, ct).ConfigureAwait(false);

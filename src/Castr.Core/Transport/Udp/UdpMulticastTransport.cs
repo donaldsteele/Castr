@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Channels;
+using Castr.Core.Diagnostics; // BENCH (temporary M7 instrumentation)
 
 namespace Castr.Core.Transport.Udp;
 
@@ -57,8 +58,11 @@ public sealed class UdpMulticastTransport : IMulticastTransport
         // Best-effort: the OS may clamp these below SocketBufferBytes rather than throw, so failures here are
         // swallowed rather than treated as fatal — a transport that can't get a bigger buffer should still work,
         // just with less slack against bursts (see SocketBufferBytes's doc comment).
-        TrySetSocketOption(SocketOptionName.ReceiveBuffer, SocketBufferBytes);
-        TrySetSocketOption(SocketOptionName.SendBuffer, SocketBufferBytes);
+        // BENCH (temporary M7 instrumentation): SocketBufferOverride is -1 unless CASTR_BENCH_SOCKBUF is set,
+        // so this is exactly SocketBufferBytes in every normal run.
+        int bufferBytes = BenchMetrics.SocketBufferOverride > 0 ? BenchMetrics.SocketBufferOverride : SocketBufferBytes;
+        TrySetSocketOption(SocketOptionName.ReceiveBuffer, bufferBytes);
+        TrySetSocketOption(SocketOptionName.SendBuffer, bufferBytes);
         _socket.Bind(new IPEndPoint(IPAddress.Any, port));
 
         _socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastLoopback, multicastLoopback);
@@ -113,10 +117,20 @@ public sealed class UdpMulticastTransport : IMulticastTransport
             SingleReader = true, // only one logical consumer per transport instance in this codebase
         });
         _readerLoopTask = Task.Run(() => ReceiveLoopAsync(_readerCts.Token));
+
+        // BENCH (temporary M7 instrumentation) — record the buffer sizes the OS actually granted, and expose
+        // the bounded channel's live depth to the sampler. No effect when CASTR_BENCH is unset.
+        BenchMetrics.RegisterInbox(() => _inbox.Reader.Count, InboxCapacity);
+        BenchMetrics.Meta_("requestedSocketBufferBytes", bufferBytes.ToString());
+        BenchMetrics.Meta_("effectiveReceiveBufferBytes", _socket.ReceiveBufferSize.ToString());
+        BenchMetrics.Meta_("effectiveSendBufferBytes", _socket.SendBufferSize.ToString());
     }
 
-    public async ValueTask SendAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken = default) =>
+    public async ValueTask SendAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken = default)
+    {
+        BenchMetrics.OnDatagramSent(payload.Span); // BENCH
         await _socket.SendToAsync(payload, SocketFlags.None, _groupEndpoint, cancellationToken).ConfigureAwait(false);
+    }
 
     /// <summary>Enumerates packets already drained off the socket by <see cref="ReceiveLoopAsync"/>. Cancelling <paramref name="cancellationToken"/> only stops this particular enumeration — the underlying socket-reader loop keeps running (draining the socket, buffering into the channel) until the transport itself is disposed.</summary>
     public IAsyncEnumerable<ReceivedPacket> ReceiveAsync(CancellationToken cancellationToken = default) =>
@@ -140,6 +154,15 @@ public sealed class UdpMulticastTransport : IMulticastTransport
                     break; // socket cancelled/disposed/reset — shutting down
                 // TryReceiveAsync already copies the received bytes into ReceivedPacket's own array (see its
                 // body below), so `buffer` itself is safe to reuse for the next datagram — no allocation here.
+                BenchMetrics.OnDatagramReceived(received.Payload); // BENCH
+                if (BenchMetrics.Enabled)
+                {
+                    // BENCH: distinguishes "channel sitting empty (loss/sender-bound)" from "channel full
+                    // (receiver-processing-bound)" by counting the times the producer actually had to block.
+                    if (_inbox.Writer.TryWrite(received))
+                        continue;
+                    BenchMetrics.OnChannelWriteBlocked();
+                }
                 await _inbox.Writer.WriteAsync(received, cancellationToken).ConfigureAwait(false);
             }
         }

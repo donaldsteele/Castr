@@ -89,7 +89,12 @@ internal static class SendRunner
             else
             {
                 session.ProgressChanged += reporter.OnProgress;
-                await session.RunAsync(cancellationToken).ConfigureAwait(false);
+                // BENCH (temporary M7 instrumentation): a sender never self-terminates (it keeps serving repair
+                // requests), so the benchmark harness needs a way to stop it that still runs the metrics flush in
+                // Program's finally block. Inert unless CASTR_BENCH_STOP_FILE is set.
+                using var benchStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                _ = BenchWatchStopFileAsync(benchStop);
+                await session.RunAsync(benchStop.Token).ConfigureAwait(false);
             }
 
             return ExitCodes.Success;
@@ -104,5 +109,27 @@ internal static class SendRunner
             console.MarkupLineInterpolated($"[red]Send failed:[/] {ex.Message}");
             return ExitCodes.RuntimeError;
         }
+    }
+
+    /// <summary>BENCH (temporary M7 instrumentation): cancels the send once the harness drops a stop file.</summary>
+    private static async Task BenchWatchStopFileAsync(CancellationTokenSource cts)
+    {
+        var stopFile = Environment.GetEnvironmentVariable("CASTR_BENCH_STOP_FILE");
+        if (string.IsNullOrWhiteSpace(stopFile))
+            return;
+        try
+        {
+            while (!cts.IsCancellationRequested)
+            {
+                if (File.Exists(stopFile))
+                {
+                    await cts.CancelAsync().ConfigureAwait(false);
+                    return;
+                }
+                await Task.Delay(50, cts.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
     }
 }
