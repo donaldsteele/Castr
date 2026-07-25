@@ -2,6 +2,7 @@ using NSec.Cryptography;
 using Castr.Core.Chunking;
 using Castr.Core.Manifest;
 using Castr.Core.Security;
+using Castr.Core.Swarm;
 using Castr.Core.Transport;
 
 namespace Castr.Core.Protocol;
@@ -198,6 +199,63 @@ public sealed class SenderSession(
     {
         try { return MessageCodec.Decode(payload); }
         catch { return null; } // malformed/corrupt packet — ignore, don't crash the receive loop
+    }
+
+    /// <summary>
+    /// Exposes this sender as a read-only <see cref="ISwarmContentSource"/> so a <see cref="SwarmServeListener"/>
+    /// can answer unicast TCP pull requests — the sender holds every chunk and can grant the content key.
+    /// Purely additive; the multicast carousel/repair behavior above is untouched.
+    /// </summary>
+    public ISwarmContentSource CreateSwarmContentSource() => new SenderContentSource(this);
+
+    private SignedManifest ServeManifest => signedManifest;
+
+    private async ValueTask<SwarmChunk?> BuildSwarmChunkAsync(int fileIndex, int chunkIndex, CancellationToken ct)
+    {
+        if (!fileSources.TryGetValue(fileIndex, out var source) || !merkleTrees.TryGetValue(fileIndex, out var tree))
+            return null;
+
+        var files = signedManifest.Manifest.Files;
+        if (fileIndex < 0 || fileIndex >= files.Count)
+            return null;
+        var file = files[fileIndex];
+        if (chunkIndex < 0 || chunkIndex >= file.ChunkCount)
+            return null;
+
+        var plaintext = await Chunker.ReadChunkAsync(source, file.ChunkSize, chunkIndex, ct).ConfigureAwait(false);
+        var ciphertext = contentKey.EncryptChunk(signedManifest.Manifest.SessionId, fileIndex, chunkIndex, plaintext);
+        var proof = tree.GetProof(chunkIndex);
+        return new SwarmChunk(ciphertext, proof);
+    }
+
+    private KeyGrantMessage? GrantContentKey(JoinRequestMessage join)
+    {
+        if (!join.SessionId.AsSpan().SequenceEqual(signedManifest.Manifest.SessionId))
+            return null;
+
+        byte[] wrapped;
+        try
+        {
+            wrapped = ContentKeyWrap.Wrap(
+                senderEncryptionKey, join.ReceiverEncryptionPublicKey,
+                signedManifest.Manifest.SessionId, join.ReceiverId, contentKey.Export());
+        }
+        catch (Exception ex) when (ex is ArgumentException or FormatException or System.Security.Cryptography.CryptographicException)
+        {
+            return null; // malformed receiver public key — refuse the grant, don't crash the serve loop
+        }
+
+        return new KeyGrantMessage(signedManifest.Manifest.SessionId, join.ReceiverId, wrapped);
+    }
+
+    private sealed class SenderContentSource(SenderSession session) : ISwarmContentSource
+    {
+        public SignedManifest? Manifest => session.ServeManifest;
+
+        public ValueTask<SwarmChunk?> TryGetChunkAsync(int fileIndex, int chunkIndex, CancellationToken cancellationToken = default) =>
+            session.BuildSwarmChunkAsync(fileIndex, chunkIndex, cancellationToken);
+
+        public KeyGrantMessage? TryGrantContentKey(JoinRequestMessage request) => session.GrantContentKey(request);
     }
 
     private void EmitProgress(TransferPhase phase)

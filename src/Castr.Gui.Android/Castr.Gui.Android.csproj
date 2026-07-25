@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Castr Android head (M4). Inherently Android-only: it targets net10.0-android and simply will not build
+    without the Android workload + command-line SDK + a JDK (exactly as Castr.Gui.Desktop inherently needs a
+    desktop toolchain). Unlike Castr.Core.Discovery it does NOT gate its TFM behind CastrMobileTargets — there
+    is nothing to build here except the mobile head. It is deliberately excluded from the default cross-OS CI
+    matrix (which installs no mobile workloads); its own workflow (.github/workflows/ci-mobile-android.yml)
+    builds it on a runner provisioned with the Android SDK.
+
+    The dependency direction matches the desktop head: Android head -> Castr.Gui (shared views/viewmodels) ->
+    Castr.Core. The direct reference to Castr.Core.Discovery below resolves the net10.0-android head of that
+    library, which is where the real NsdManager-backed NsdServiceDiscovery lives.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <OutputType>Exe</OutputType>
+
+    <ApplicationId>com.castr.app</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <AndroidManifest>AndroidManifest.xml</AndroidManifest>
+
+    <!-- Produce a plain .apk (not an .aab app bundle) so the CI job can upload a directly-sideloadable file. -->
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <!--
+      NOTE: Release Android builds are debug-signed by the SDK's default debug keystore unless a release
+      keystore is configured. The APK this project produces is therefore a SIDELOAD/CI-CONVENIENCE artifact,
+      NOT a Play-Store-ready signed release. Proper release signing (a managed keystore + AndroidSigningKey*)
+      is M5 (release automation) scope, matching how the M3 desktop `package` zips are documented as unsigned.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.0" />
+    <PackageReference Include="Avalonia.Android" Version="12.1.0" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.0" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Castr.Gui\Castr.Gui.csproj" />
+    <ProjectReference Include="..\Castr.Core.Discovery\Castr.Core.Discovery.csproj" />
+  </ItemGroup>
+
+</Project>

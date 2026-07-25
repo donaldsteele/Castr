@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  No special entitlements are required for Castr's mobile tier. Local-network mDNS/Bonjour discovery is
+  gated by the Info.plist NSLocalNetworkUsageDescription + NSBonjourServices keys (a runtime user-consent
+  prompt), NOT by a signing entitlement. Castr deliberately does NOT use the multicast-networking
+  entitlement (com.apple.developer.networking.multicast) — that is Apple-gated to approved AV use cases and
+  is exactly the restriction the unicast-swarm mobile design sidesteps (see ADR-0002 / the "why mobile is
+  architecturally different" note). This empty dict keeps the simulator/unsigned CI build free of any
+  paid-developer-account provisioning dependency (deferred to M5).
+-->
+<plist version="1.0">
+<dict/>
+</plist>

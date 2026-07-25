@@ -46,4 +46,21 @@ public class ChunkPositionBindingTests
         Assert.Null(contentKey.TryDecryptChunk(SessionId, fileIndex: 0, chunkIndex: 4, ciphertext2)); // wrong chunk index
         Assert.Null(contentKey.TryDecryptChunk(SessionId, fileIndex: 1, chunkIndex: 2, ciphertext2)); // wrong file index
     }
+
+    [Fact]
+    public void GenuineProof_WithRewrittenLeafIndex_IsRejectedByVerify()
+    {
+        // MerkleProof.LeafIndex is a plaintext, wire-mutable field. A relaying peer that keeps a genuine chunk's
+        // Steps (which still reproduce the real root) but rewrites LeafIndex to match a forged claimed position
+        // must NOT verify — otherwise a session's "proof.LeafIndex == claimed index" guard is meaningless and
+        // the chunk-index-swap permanent-stall DoS reopens. Verify binds LeafIndex to the Steps' committed
+        // position, so the tampered proof is rejected even though its ciphertext and Steps are genuine.
+        var leaves = Enumerable.Range(0, 8).Select(i => ChunkHash.Compute([(byte)i])).ToArray();
+        var tree = MerkleTree.Build(leaves);
+        var genuine = tree.GetProof(2);
+
+        Assert.True(MerkleProof.Verify(tree.Root, leaves[2], genuine));               // genuine proof verifies
+        var relabeled = genuine with { LeafIndex = 5 };                               // lie about position only
+        Assert.False(MerkleProof.Verify(tree.Root, leaves[2], relabeled));            // ...now rejected
+    }
 }

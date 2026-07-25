@@ -24,6 +24,23 @@ public sealed class PeerTable(TimeSpan? ttl = null) : IPeerTable
         entry.FileBitmaps[message.FileIndex] = message.ChunkBitmap;
     }
 
+    public void ObserveDiscovered(Endpoint endpoint, DateTimeOffset now)
+    {
+        // Discovery has no receiver-id, so discovered peers are keyed by endpoint (prefixed to avoid ever
+        // colliding with a gossip key, which is the hex of a 16-byte receiver-id). ReceiverId is a stable
+        // synthetic value derived from the endpoint — its length (UTF-8 of "host:port") differs from a real
+        // 16-byte id, so it never masquerades as one when RepairCoordinator compares against the caller's id.
+        string key = DiscoveredKeyOf(endpoint);
+        if (!_peers.TryGetValue(key, out var entry))
+        {
+            entry = new PeerEntry(System.Text.Encoding.UTF8.GetBytes(endpoint.ToString())) { Discovered = true };
+            _peers[key] = entry;
+        }
+
+        entry.Endpoint = endpoint;
+        entry.LastSeen = now;
+    }
+
     public void RemoveExpired(DateTimeOffset now)
     {
         var expiredKeys = _peers.Where(kv => now - kv.Value.LastSeen > _ttl).Select(kv => kv.Key).ToList();
@@ -36,23 +53,30 @@ public sealed class PeerTable(TimeSpan? ttl = null) : IPeerTable
         var result = new List<PeerInfo>();
         foreach (var entry in _peers.Values)
         {
-            if (!entry.FileBitmaps.TryGetValue(fileIndex, out var bitmapBytes))
-                continue;
-
-            if (!HasBit(bitmapBytes, chunkIndex))
-                continue;
-
-            result.Add(new PeerInfo(entry.ReceiverId, entry.Endpoint, entry.LastSeen, PopCount(bitmapBytes)));
+            if (entry.FileBitmaps.TryGetValue(fileIndex, out var bitmapBytes))
+            {
+                // Gossip-confirmed: we know exactly whether this peer holds the chunk. If it doesn't, it is
+                // excluded even if it was also discovered — a confirmed "no" beats an "unknown."
+                if (HasBit(bitmapBytes, chunkIndex))
+                    result.Add(new PeerInfo(entry.ReceiverId, entry.Endpoint, entry.LastSeen, PopCount(bitmapBytes)));
+            }
+            else if (entry.Discovered)
+            {
+                // mDNS-discovered, no bitmap for this file: completeness unknown, so try it as a last resort
+                // (ranked below every gossip-confirmed holder via the -1 sentinel).
+                result.Add(new PeerInfo(entry.ReceiverId, entry.Endpoint, entry.LastSeen, PeerInfo.UnknownChunkPopCount));
+            }
         }
 
-        // Most-complete-file first; ties broken by RepairCoordinator's own jitter, not here.
+        // Most-complete-file first; ties broken by RepairCoordinator's own jitter, not here. The -1 sentinel
+        // naturally sorts unknown-completeness discovered peers last.
         return [.. result.OrderByDescending(p => p.ChunkPopCount)];
     }
 
     public IReadOnlyList<PeerInfo> All() =>
         [.. _peers.Values.Select(e => new PeerInfo(
             e.ReceiverId, e.Endpoint, e.LastSeen,
-            e.FileBitmaps.Count > 0 ? e.FileBitmaps.Values.Max(PopCount) : 0))];
+            e.FileBitmaps.Count > 0 ? e.FileBitmaps.Values.Max(PopCount) : (e.Discovered ? PeerInfo.UnknownChunkPopCount : 0)))];
 
     private static bool HasBit(byte[] bitmapBytes, int index)
     {
@@ -72,11 +96,16 @@ public sealed class PeerTable(TimeSpan? ttl = null) : IPeerTable
 
     private static string KeyOf(byte[] receiverId) => Convert.ToHexString(receiverId);
 
+    private static string DiscoveredKeyOf(Endpoint endpoint) => "disc:" + endpoint;
+
     private sealed class PeerEntry(byte[] receiverId)
     {
         public byte[] ReceiverId { get; } = receiverId;
         public Endpoint Endpoint { get; set; } = new("", 0);
         public DateTimeOffset LastSeen { get; set; }
         public Dictionary<int, byte[]> FileBitmaps { get; } = [];
+
+        /// <summary>True for a peer learned only via mDNS discovery (no gossip bitmap) — completeness unknown.</summary>
+        public bool Discovered { get; init; }
     }
 }

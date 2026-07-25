@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      References the net10.0 head of the (mobile-multi-targeted) discovery library. These tests cover the
+      platform-neutral surface only: the IServiceDiscovery contract, the _castr._tcp service-type string,
+      the DiscoveredPeer shape, and the in-memory fake. The Android/iOS binding code cannot be unit-tested
+      here (needs real devices/emulators) and is deliberately out of scope for this project.
+    -->
+    <ProjectReference Include="..\..\src\Castr.Core.Discovery\Castr.Core.Discovery.csproj" />
+  </ItemGroup>
+
+</Project>
