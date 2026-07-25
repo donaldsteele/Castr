@@ -37,6 +37,8 @@ When this file exceeds ~300 lines or the wiki passes ~150 pages, shard into `wik
 - [[m6-throughput-pipelining]] — M6 complete: root-caused the ~1.6-2.4 MB/s demo-plateau to receiver-side serialization (not sender-side, round 1's first guess); fixed via a channel-decoupled receive loop + explicit socket buffers; three rounds, two independent QA+systems-design reviews; 367 tests.
 - [[m7-repair-amplification]] — M7 (not merged): repair-storm bounding, PEER_HAVE coalescing, sender own-echo filter. Wire amplification 2.4x → 1.1x and the periodic stall gone; the "+112.6% goodput" claim was **withdrawn** as degraded-host recovery. Round 1 QA FAIL on a reproduced liveness hang (global carousel-idle timer); 431 tests.
 
+- [[proposal-section-based-repair]] — **proposal, not a decision**: replace the carousel-idle heuristic with an explicit sender-emitted section-completion signal. Motivated by deleting the bug class behind both M7 liveness defects, *not* by throughput (amplification is already 1.05×, and deferring repair measured −11% in isolation). Blocked on M8.
+
 ## Documentation outside the wiki
 
 Kept here so the index surfaces them; these are public-facing repo docs, not wiki pages.
