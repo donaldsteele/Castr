@@ -50,6 +50,14 @@ Mobile devices can't reliably join true IP multicast (see [[castr-project]]), so
 
 See [[adr-0003-payload-encryption]] for the full design. In short: chunk payloads (`CHUNK_DATA`/`CHUNK_RESPONSE`) are ChaCha20-Poly1305-encrypted under a per-transfer content key that never travels over multicast in the clear. A receiver obtains it via a small unicast handshake (`JOIN_REQUEST` → `KEY_GRANT`) *after* it has already decided to trust the sender's signed manifest — the data plane (chunk carousel, repair) stays fully multicast; only this per-receiver key exchange is unicast. **Implemented in M1.5** — see [[m1.5-encryption-summary]]. One deliberate deviation from the description above: `JOIN_REQUEST`/`KEY_GRANT` actually travel over the same shared multicast channel as everything else, not a separate unicast socket, matching the existing MVP trim already applied to `CHUNK_REQUEST`/`CHUNK_RESPONSE` (see [[m1-core-summary]]); `KEY_GRANT` stays confidential because it's cryptographically readable only by its addressed receiver.
 
+## Send/receive pipelining and socket buffering (M6)
+
+Neither of these is a wire-format change — no new message types, no change to what any message contains — but both change how fast the existing messages actually move, and are worth documenting alongside the message-level design above. Full investigation detail (three review rounds, benchmark numbers, what didn't work) is in [[m6-throughput-pipelining]]; this section covers the resulting steady-state design.
+
+- **Send path**: `SenderSession`'s chunk carousel and chunk-repair batches send wire packets via a bounded-concurrency `Parallel.ForEachAsync` (constructor parameter `sendWindowSize`) rather than one `await` per packet. The shipped default is **1** — behaviorally a no-op versus the original fully-sequential design — because the safe window is receiver-hardware-dependent and only validated so far on a single loopback machine. `castr send --send-window-size <n>` lets a deployment that has validated a higher value on its own receiver hardware opt in. A known, documented, non-default-affecting gap: the carousel and repair-handler loops each cap concurrency independently, so simultaneous heavy repair traffic during an in-flight carousel can transiently push real concurrent sends to 2× the configured window.
+- **Receive path**: `UdpMulticastTransport`'s socket read is decoupled from `ReceiverSession`'s downstream processing (Merkle/AEAD verify, disk write, outbound `PEER_HAVE` broadcast) via a dedicated reader task that drains `socket.ReceiveFromAsync` into a bounded `Channel<ReceivedPacket>` (capacity 4096); `ReceiveAsync` just enumerates the channel at the consumer's own pace. This is the fix that actually mattered — see [[m6-throughput-pipelining]] for why the send-side window alone couldn't safely go above 1 without it. The socket also gets an explicit, best-effort 4 MB `SO_RCVBUF`/`SO_SNDBUF`, since the OS default is often much smaller and this was a design cue taken directly from `uftp-multicast`, a reference near-wire-speed UDP multicast implementation.
+- Both are complementary, not substitutes for each other: the channel/buffer combination absorbs bursts and jitter, but sustained throughput is still capped by `ReceiverSession`'s true per-packet processing rate, which M6 did not change.
+
 ## Replay protection
 
 Session ID = 16 random bytes, sender-generated per transfer. Trust is keyed to the sender's Ed25519 public-key fingerprint, not the session ID, so replaying an old legitimate announce is low-severity — worst case is a redundant, hash-verified rewrite of a file the receiver already has.
@@ -66,3 +74,4 @@ Session ID = 16 random bytes, sender-generated per transfer. Trust is keyed to t
 - [[m2-ui-summary]]
 - [[m3-test-ci-hardening-summary]]
 - [[m4-mobile-summary]]
+- [[m6-throughput-pipelining]]
