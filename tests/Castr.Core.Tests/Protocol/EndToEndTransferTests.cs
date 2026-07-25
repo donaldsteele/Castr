@@ -129,6 +129,68 @@ public class EndToEndTransferTests
     }
 
     [Fact]
+    public async Task RelabeledGenuineChunk_ClaimingWrongPosition_NeverMarkedHave_RepairStillDeliversRealChunk()
+    {
+        // A relaying peer takes chunk 2's genuine (ciphertext, Merkle proof) off the wire and re-emits it
+        // relabeled as chunk 5. Merkle verification alone would accept this — it only proves membership in the
+        // tree, not that the claimed wire index matches the proof's own committed leaf index — so without the
+        // ReceiverSession.HandleChunkAsync LeafIndex-vs-claimed-index binding, this would mark chunk 5 "have"
+        // using chunk 2's ciphertext, which then fails AEAD decryption and is silently left pending forever
+        // (never rewritten, never re-requested, since the bitmap already thinks chunk 5 is done). The fix
+        // rejects the relabeled packet before the bitmap is ever touched, so the real chunk 5 — delivered
+        // normally moments later by the same honest carousel/repair — still lands correctly.
+        var originalBytes = RandomBytes(seed: 7, length: 8000); // chunkSize 1000 -> 8 chunks, indices 0-7
+        using var key = ManifestSigner.CreateSigningKey();
+        var transfer = BuildTransfer(key, "data.bin", originalBytes, chunkSize: 1000);
+
+        var network = new InMemoryNetwork();
+        var senderTransport = network.CreateMulticastTransport(new Endpoint("sender", 1));
+        var sender = NewSender(transfer, senderTransport);
+
+        var rawReceiverTransport = network.CreateMulticastTransport(new Endpoint("r", 1));
+        var swappingTransport = new ChunkPositionSwappingMulticastTransport(rawReceiverTransport, sourceChunkIndex: 2, claimedChunkIndex: 5);
+
+        var (sink, sinkFactory) = MemorySinkFactory();
+        var receiver = new ReceiverSession(
+            ReceiverId(1), TrustedStoreFor(key), swappingTransport, new FakeClock(DateTimeOffset.UtcNow),
+            new ReceiverSessionOptions("/root"), sinkFactory);
+
+        await RunUntilCompleteAsync(sender, receiver, extraRepairRounds: true);
+
+        Assert.True(receiver.IsComplete);
+        Assert.Equal(originalBytes, sink().ToArray()); // chunk 5 holds its own genuine bytes, not chunk 2's
+    }
+
+    [Fact]
+    public async Task RelabeledChunk_AlsoRewritingProofLeafIndex_StillNeverStalls()
+    {
+        // Stronger threat model than the test above: the relay rewrites BOTH the wire ChunkIndex AND the
+        // proof's own (plaintext, wire-mutable) LeafIndex to the same lie, so a naive "proof.LeafIndex ==
+        // claimed index" guard would pass. The chunk's Steps still commit to the genuine position, so binding
+        // LeafIndex to the Steps inside MerkleProof.Verify is what rejects it; without that, chunk 5 would be
+        // marked "have" from chunk 2's ciphertext, fail AEAD, and strand the transfer forever.
+        var originalBytes = RandomBytes(seed: 11, length: 8000); // chunkSize 1000 -> 8 chunks, indices 0-7
+        using var key = ManifestSigner.CreateSigningKey();
+        var transfer = BuildTransfer(key, "data.bin", originalBytes, chunkSize: 1000);
+
+        var network = new InMemoryNetwork();
+        var sender = NewSender(transfer, network.CreateMulticastTransport(new Endpoint("sender", 1)));
+
+        var rawReceiverTransport = network.CreateMulticastTransport(new Endpoint("r", 1));
+        var swappingTransport = new ChunkAndLeafIndexSwappingTransport(rawReceiverTransport, sourceChunkIndex: 2, claimedChunkIndex: 5);
+
+        var (sink, sinkFactory) = MemorySinkFactory();
+        var receiver = new ReceiverSession(
+            ReceiverId(1), TrustedStoreFor(key), swappingTransport, new FakeClock(DateTimeOffset.UtcNow),
+            new ReceiverSessionOptions("/root"), sinkFactory);
+
+        await RunUntilCompleteAsync(sender, receiver, extraRepairRounds: true);
+
+        Assert.True(receiver.IsComplete);
+        Assert.Equal(originalBytes, sink().ToArray());
+    }
+
+    [Fact]
     public async Task ReceiverMissesChunk_RepairRecoversIt_ViaPeerOrSenderResponse()
     {
         // Note: this MVP broadcasts CHUNK_REQUEST over the shared multicast channel with no NACK
@@ -359,6 +421,84 @@ public class EndToEndTransferTests
                     tamperedPayload[0] ^= 0xFF;
                     var tampered = chunkData with { Payload = tamperedPayload };
                     yield return new ReceivedPacket(MessageCodec.Encode(tampered), packet.From);
+                    continue;
+                }
+
+                yield return packet;
+            }
+        }
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
+
+    /// <summary>
+    /// Simulates a relaying peer that takes one genuine (ciphertext, proof) pair for <paramref name="sourceChunkIndex"/>
+    /// and re-emits it exactly once, unmodified except for the wire-claimed <c>ChunkIndex</c>, now lying that it's
+    /// <paramref name="claimedChunkIndex"/>. Only the first matching packet is relabeled; everything else (including
+    /// later genuine deliveries of both indices) passes through untouched, so the test can observe whether the
+    /// system recovers cleanly rather than getting permanently stuck.
+    /// </summary>
+    private sealed class ChunkPositionSwappingMulticastTransport(IMulticastTransport inner, int sourceChunkIndex, int claimedChunkIndex) : IMulticastTransport
+    {
+        private bool _swapped;
+
+        public ValueTask SendAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken = default) =>
+            inner.SendAsync(payload, cancellationToken);
+
+        public async IAsyncEnumerable<ReceivedPacket> ReceiveAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await foreach (var packet in inner.ReceiveAsync(cancellationToken))
+            {
+                object? decoded;
+                try { decoded = MessageCodec.Decode(packet.Payload); }
+                catch { decoded = null; }
+
+                if (!_swapped && decoded is ChunkDataMessage { ChunkIndex: var idx } chunkData && idx == sourceChunkIndex)
+                {
+                    _swapped = true;
+                    var relabeled = chunkData with { ChunkIndex = claimedChunkIndex };
+                    yield return new ReceivedPacket(MessageCodec.Encode(relabeled), packet.From);
+                    continue;
+                }
+
+                yield return packet;
+            }
+        }
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
+
+    /// <summary>
+    /// Like <see cref="ChunkPositionSwappingMulticastTransport"/> but also rewrites the proof's own LeafIndex to
+    /// the lie, modeling a relay that knows the naive guard compares those two fields. Only the first matching
+    /// packet is relabeled; everything else passes through, so the test observes clean recovery vs. a stall.
+    /// </summary>
+    private sealed class ChunkAndLeafIndexSwappingTransport(IMulticastTransport inner, int sourceChunkIndex, int claimedChunkIndex) : IMulticastTransport
+    {
+        private bool _swapped;
+
+        public ValueTask SendAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken = default) =>
+            inner.SendAsync(payload, cancellationToken);
+
+        public async IAsyncEnumerable<ReceivedPacket> ReceiveAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await foreach (var packet in inner.ReceiveAsync(cancellationToken))
+            {
+                object? decoded;
+                try { decoded = MessageCodec.Decode(packet.Payload); }
+                catch { decoded = null; }
+
+                if (!_swapped && decoded is ChunkDataMessage { ChunkIndex: var idx } chunkData && idx == sourceChunkIndex)
+                {
+                    _swapped = true;
+                    var relabeled = chunkData with
+                    {
+                        ChunkIndex = claimedChunkIndex,
+                        Proof = chunkData.Proof with { LeafIndex = claimedChunkIndex },
+                    };
+                    yield return new ReceivedPacket(MessageCodec.Encode(relabeled), packet.From);
                     continue;
                 }
 

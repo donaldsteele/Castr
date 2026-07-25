@@ -131,6 +131,40 @@ public static class MessageCodec
                 }
                 break;
 
+            case ManifestRequestMessage:
+                stream.WriteByte((byte)MessageType.ManifestRequest);
+                break;
+
+            case ChunkPullRequestMessage m:
+                stream.WriteByte((byte)MessageType.ChunkPullRequest);
+                WriteFixed(stream, m.SessionId, SessionIdSize);
+                WriteInt32(stream, m.FileIndex);
+                WriteInt32Array(stream, m.ChunkIndices);
+                break;
+
+            case ChunkPullResponseMessage m:
+                stream.WriteByte((byte)MessageType.ChunkPullResponse);
+                WriteFixed(stream, m.SessionId, SessionIdSize);
+                WriteInt32(stream, m.FileIndex);
+                WriteInt32(stream, m.ChunkIndex);
+                if (m.Found && m.Proof is not null)
+                {
+                    stream.WriteByte(1);
+                    WriteVarBytes(stream, m.Payload);
+                    WriteMerkleProof(stream, m.Proof);
+                }
+                else
+                {
+                    stream.WriteByte(0);
+                }
+                break;
+
+            case KeyUnavailableMessage m:
+                stream.WriteByte((byte)MessageType.KeyUnavailable);
+                WriteFixed(stream, m.SessionId, SessionIdSize);
+                WriteFixed(stream, m.ReceiverId, IdSize);
+                break;
+
             default:
                 throw new ArgumentException($"Unknown message type: {message.GetType()}", nameof(message));
         }
@@ -214,8 +248,35 @@ public static class MessageCodec
 
             MessageType.ChunkPacket => DecodeChunkPacketMessage(ref reader),
 
+            MessageType.ManifestRequest => new ManifestRequestMessage(),
+
+            MessageType.ChunkPullRequest => new ChunkPullRequestMessage(
+                reader.ReadBytes(SessionIdSize).ToArray(),
+                reader.ReadInt32(),
+                reader.ReadInt32Array()),
+
+            MessageType.ChunkPullResponse => DecodeChunkPullResponseMessage(ref reader),
+
+            MessageType.KeyUnavailable => new KeyUnavailableMessage(
+                reader.ReadBytes(SessionIdSize).ToArray(),
+                reader.ReadBytes(IdSize).ToArray()),
+
             _ => throw new InvalidDataException($"Unknown message type tag {(byte)type}."),
         };
+    }
+
+    private static ChunkPullResponseMessage DecodeChunkPullResponseMessage(ref SpanReader reader)
+    {
+        var sessionId = reader.ReadBytes(SessionIdSize).ToArray();
+        int fileIndex = reader.ReadInt32();
+        int chunkIndex = reader.ReadInt32();
+        bool found = reader.ReadByte() == 1;
+        if (!found)
+            return new ChunkPullResponseMessage(sessionId, fileIndex, chunkIndex, false, [], null);
+
+        var payload = reader.ReadVarBytes();
+        var proof = reader.ReadMerkleProof();
+        return new ChunkPullResponseMessage(sessionId, fileIndex, chunkIndex, true, payload, proof);
     }
 
     private static ChunkPacketMessage DecodeChunkPacketMessage(ref SpanReader reader)

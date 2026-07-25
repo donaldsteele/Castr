@@ -2,6 +2,7 @@ using NSec.Cryptography;
 using Castr.Core.Chunking;
 using Castr.Core.Manifest;
 using Castr.Core.Security;
+using Castr.Core.Swarm;
 using Castr.Core.Time;
 using Castr.Core.Transport;
 using Castr.Core.Trust;
@@ -233,15 +234,19 @@ public sealed class ReceiverSession
         if (Manifest is not null)
             return; // one-shot session: first accepted manifest wins
 
-        if (!ManifestVerifier.VerifySignature(message.SignedManifest))
-            return; // invalid signature — forged or corrupt, reject outright
+        // Signature verification + TOFU trust flow — the exact same admission gate the unicast-swarm
+        // SwarmPullSession runs (see Castr.Core.Trust.ManifestAdmission), extracted so there is one copy.
+        var admission = await ManifestAdmission.EvaluateAsync(
+            message.SignedManifest, _trustStore, _clock, _options.UnknownSenderPolicy, _options.IsInteractive, _trustPrompt, ct)
+            .ConfigureAwait(false);
 
-        var senderId = message.SignedManifest.SenderId;
-        var decision = TrustDecisionEngine.Evaluate(senderId, _trustStore, _options.UnknownSenderPolicy, _options.IsInteractive);
-        if (!decision.ShouldProceed && !await TryPromptForTrustAsync(decision, message.SignedManifest, senderId, ct).ConfigureAwait(false))
+        if (admission.Outcome == ManifestAdmissionOutcome.SignatureInvalid)
+            return; // invalid signature — forged or corrupt, reject outright (no trust event, unchanged behavior)
+
+        if (admission.Outcome == ManifestAdmissionOutcome.Denied)
         {
             EmitProgress(TransferPhase.TrustDenied);
-            SenderTrustDenied?.Invoke(decision, senderId);
+            SenderTrustDenied?.Invoke(admission.Decision!, message.SignedManifest.SenderId);
             return;
         }
 
@@ -267,30 +272,6 @@ public sealed class ReceiverSession
         // Now that the sender's manifest is trusted, request the per-transfer content key (ADR-0003).
         var join = new JoinRequestMessage(Manifest.Manifest.SessionId, _receiverId, _encryptionPublicKey);
         await SendMessageAsync(join, ct).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// When trust evaluation asked for an interactive decision (<see cref="TrustOutcome.PromptRequired"/>)
-    /// and an <see cref="ITrustPrompt"/> was supplied, consult it. If the human accepts, persist a
-    /// <see cref="TrustStatus.Trusted"/> entry (TOFU) and report success so the transfer proceeds. In every
-    /// other case — no prompt supplied, a non-prompt denial, or the human rejecting — return false so the
-    /// caller denies exactly as before (unchanged behavior).
-    /// </summary>
-    private async Task<bool> TryPromptForTrustAsync(TrustDecision decision, SignedManifest signedManifest, PublicKeyId senderId, CancellationToken ct)
-    {
-        if (decision.Outcome != TrustOutcome.PromptRequired || _trustPrompt is null)
-            return false;
-
-        var manifest = signedManifest.Manifest;
-        long totalBytes = manifest.Files.Sum(f => f.Size);
-        var context = new TrustPromptContext(senderId, manifest.TransferName, manifest.Files.Count, totalBytes);
-
-        if (!await _trustPrompt.RequestTrustAsync(context, ct).ConfigureAwait(false))
-            return false;
-
-        var displayName = string.IsNullOrEmpty(manifest.TransferName) ? senderId.Value : manifest.TransferName;
-        _trustStore.Upsert(new TrustEntry(senderId, displayName, TrustStatus.Trusted, _clock.UtcNow, TrustEntrySource.Manual));
-        return true;
     }
 
     private async Task HandleKeyGrantAsync(KeyGrantMessage grant, CancellationToken ct)
@@ -350,6 +331,15 @@ public sealed class ReceiverSession
         if (!_bitmaps.TryGetValue(fileIndex, out var bitmap)
             || chunkIndex < 0 || chunkIndex >= bitmap.ChunkCount
             || bitmap.Get(chunkIndex))
+            return;
+
+        // Bind the proof's committed leaf position to the claimed chunk index: a relaying peer must not be able
+        // to pass off chunk A's (valid) ciphertext+proof as chunk B. Merkle verification alone recomputes the
+        // root from any real leaf and would accept it regardless of the claimed index; the AEAD AAD would later
+        // reject the mismatch on decrypt, but only after the bitmap below was already set — permanently
+        // stranding that position (marked "have", never actually written, never re-requested). Rejecting here
+        // keeps a swapped chunk from ever being marked "have" in the first place.
+        if (proof.LeafIndex != chunkIndex)
             return;
 
         var file = Manifest.Manifest.Files[fileIndex];
@@ -427,6 +417,42 @@ public sealed class ReceiverSession
         var message = new PeerHaveMessage(
             Manifest!.Manifest.SessionId, _receiverId, fileIndex, _bitmaps[fileIndex].ToBytes(), "", 0);
         await SendMessageAsync(message, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Exposes this receiver as a read-only <see cref="ISwarmContentSource"/> so a <see cref="SwarmServeListener"/>
+    /// can relay the chunks it has already verified to a mobile <see cref="Swarm.SwarmPullSession"/> — the
+    /// unicast-swarm equivalent of answering a CHUNK_REQUEST. A receiver serves ciphertext only and cannot grant
+    /// the content key (it never holds the sender's X25519 private key), so <c>TryGrantContentKey</c> returns
+    /// null. Purely additive and read-only; the multicast receive/repair behavior is untouched.
+    /// </summary>
+    public ISwarmContentSource CreateSwarmContentSource() => new ReceiverContentSource(this);
+
+    private async ValueTask<SwarmChunk?> GetVerifiedChunkAsync(int fileIndex, int chunkIndex, CancellationToken ct)
+    {
+        // Read the verified-chunk cache under the same gate the receive loop mutates it with, so peer-serving
+        // never races the multicast receive path (the concurrency invariant _stateGate exists for).
+        await _stateGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            return _chunkCache.TryGetValue((fileIndex, chunkIndex), out var cached)
+                ? new SwarmChunk(cached.Ciphertext, cached.Proof)
+                : null;
+        }
+        finally
+        {
+            _stateGate.Release();
+        }
+    }
+
+    private sealed class ReceiverContentSource(ReceiverSession session) : ISwarmContentSource
+    {
+        public SignedManifest? Manifest => session.Manifest;
+
+        public ValueTask<SwarmChunk?> TryGetChunkAsync(int fileIndex, int chunkIndex, CancellationToken cancellationToken = default) =>
+            session.GetVerifiedChunkAsync(fileIndex, chunkIndex, cancellationToken);
+
+        public KeyGrantMessage? TryGrantContentKey(JoinRequestMessage request) => null;
     }
 
     private static byte[] NewNonce() => Guid.NewGuid().ToByteArray();

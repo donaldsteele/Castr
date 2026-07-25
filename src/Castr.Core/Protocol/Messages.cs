@@ -16,6 +16,10 @@ public enum MessageType : byte
     KeyGrant = 9,
     PacketFragment = 10,
     ChunkPacket = 11,
+    ManifestRequest = 12,
+    ChunkPullRequest = 13,
+    ChunkPullResponse = 14,
+    KeyUnavailable = 15,
 }
 
 /// <summary>Periodic lightweight heartbeat advertising an active transfer offer, before a receiver commits to fetching the full signed manifest.</summary>
@@ -133,3 +137,42 @@ public sealed record TransferCompleteMessage(
     byte[] SessionId,
     byte[] ReceiverId,
     TransferOutcome Outcome);
+
+// ---- unicast-swarm (mobile TCP pull) messages ----
+// These have no multicast-tier equivalent: multicast broadcasts the manifest and chunks unprompted on a
+// carousel, whereas a swarm-pull client over a point-to-point TCP stream must explicitly ASK for each thing.
+// The reply shapes intentionally omit the multicast repair artifacts (RequestNonce, ReturnHost/Port) that a
+// directed request/response over an ordered stream does not need.
+
+/// <summary>A swarm-pull client's opening ask: "what transfer are you serving?" The server replies with its <see cref="ManifestMessage"/>. Carries no fields — the client has not yet learned the session id.</summary>
+public sealed record ManifestRequestMessage;
+
+/// <summary>A swarm-pull client's request for specific chunk indices of one file over a TCP stream. The server replies with exactly one <see cref="ChunkPullResponseMessage"/> per requested index, in the same order.</summary>
+public sealed record ChunkPullRequestMessage(
+    byte[] SessionId,
+    int FileIndex,
+    int[] ChunkIndices);
+
+/// <summary>
+/// A server's reply to one requested chunk index. <see cref="Found"/> false means "I don't hold that chunk
+/// (yet)" — <see cref="Payload"/> is empty and <see cref="Proof"/> null; the client leaves it missing and
+/// tries another peer. When found, the same self-verifying (ciphertext, Merkle proof) pair as the multicast
+/// tier, so a relaying receiver forwards ciphertext it need not itself be able to read.
+/// </summary>
+public sealed record ChunkPullResponseMessage(
+    byte[] SessionId,
+    int FileIndex,
+    int ChunkIndex,
+    bool Found,
+    byte[] Payload,
+    MerkleProof? Proof);
+
+/// <summary>
+/// A server's reply to a JOIN_REQUEST when it cannot grant the content key. Only the original sender holds the
+/// X25519 private key bound in the signed manifest, so a relaying <b>receiver</b> peer can serve ciphertext
+/// chunks but not the key — it answers with this so the client stops waiting for a KEY_GRANT and obtains the
+/// key from the sender instead.
+/// </summary>
+public sealed record KeyUnavailableMessage(
+    byte[] SessionId,
+    byte[] ReceiverId);

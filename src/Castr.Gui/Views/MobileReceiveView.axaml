@@ -1,0 +1,70 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Castr.Gui.ViewModels"
+             x:Class="Castr.Gui.Views.MobileReceiveView"
+             x:DataType="vm:MobileReceiveViewModel">
+
+  <ScrollViewer>
+    <StackPanel Margin="16" Spacing="14">
+
+      <TextBlock Text="Castr" FontSize="28" FontWeight="Bold" />
+      <TextBlock Text="Receive files from a nearby device"
+                 Opacity="0.7" TextWrapping="Wrap" />
+
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <Button Content="Find peers"
+                Command="{Binding StartBrowsingCommand}"
+                IsEnabled="{Binding StartBrowsingCommand.CanExecute}" />
+        <Button Content="Stop"
+                Command="{Binding StopBrowsingCommand}"
+                IsEnabled="{Binding StopBrowsingCommand.CanExecute}" />
+      </StackPanel>
+
+      <TextBlock Text="Discovered peers" FontWeight="SemiBold" Margin="0,6,0,0" />
+      <Border BorderBrush="#40808080" BorderThickness="1" CornerRadius="6" MinHeight="120">
+        <ListBox ItemsSource="{Binding Peers}"
+                 SelectedItem="{Binding SelectedPeer}">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:DiscoveredPeerItem">
+              <StackPanel Spacing="2" Margin="4">
+                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding EndpointText}" Opacity="0.6" FontSize="12" />
+              </StackPanel>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Border>
+
+      <Button Content="Pull from selected peer"
+              HorizontalAlignment="Stretch"
+              Command="{Binding PullCommand}"
+              IsEnabled="{Binding PullCommand.CanExecute}" />
+
+      <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Margin="0,4,0,0" />
+
+      <!-- Inline Trust-On-First-Use prompt, shown only while an unknown sender awaits a decision. -->
+      <Border BorderBrush="#80E0A030" Background="#20E0A030" BorderThickness="1" CornerRadius="6" Padding="12"
+              IsVisible="{Binding PendingTrustPrompt, Converter={x:Static ObjectConverters.IsNotNull}}">
+        <StackPanel Spacing="10" DataContext="{Binding PendingTrustPrompt}">
+          <TextBlock Text="Trust this sender?" FontWeight="Bold" />
+          <TextBlock Text="{Binding Prompt}" TextWrapping="Wrap" FontSize="12" />
+          <TextBlock Text="{Binding SenderId}" FontFamily="monospace" FontSize="11" Opacity="0.7" TextWrapping="Wrap" />
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <Button Content="Trust &amp; accept" Command="{Binding AcceptCommand}" />
+            <Button Content="Reject" Command="{Binding RejectCommand}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <Border BorderBrush="#40808080" BorderThickness="1" CornerRadius="6" Padding="12"
+              IsVisible="{Binding Progress.HasProgress}">
+        <StackPanel Spacing="8">
+          <TextBlock Text="{Binding Progress.PhaseText}" FontWeight="SemiBold" />
+          <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress.Percent}" />
+          <TextBlock Text="{Binding Progress.Summary}" TextWrapping="Wrap" FontSize="12" Opacity="0.8" />
+        </StackPanel>
+      </Border>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

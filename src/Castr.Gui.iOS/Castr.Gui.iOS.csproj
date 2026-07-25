@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The iOS application head for Castr (M4). Mirrors the repo's opt-in mobile pattern established by
+    Castr.Core.Discovery: this project is inherently iOS-only and needs the .NET `ios` workload plus the
+    Xcode toolchain (CI's macOS runner) to actually build/link. But the rule is that a plain
+    `dotnet build` of the whole solution must stay green EVERYWHERE, including the cross-OS CI matrix
+    (ubuntu/windows/macos) which installs NO mobile workloads.
+
+    So the real iOS head is OPT-IN via the CastrMobileTargets property:
+
+        dotnet publish src/Castr.Gui.iOS -c Release -f net10.0-ios -p:CastrMobileTargets=true
+
+    Without that flag the project compiles a trivial, empty net10.0 stub (no Avalonia.iOS reference, no
+    iOS sources, no XAML) so a workload-less solution build never touches the iOS toolchain. The flag
+    only controls which head a given build actually compiles — all sources are authored either way.
+  -->
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <TargetFramework Condition="'$(CastrMobileTargets)' != 'true'">net10.0</TargetFramework>
+
+    <TargetFramework Condition="'$(CastrMobileTargets)' == 'true'">net10.0-ios</TargetFramework>
+    <OutputType Condition="'$(CastrMobileTargets)' == 'true'">Exe</OutputType>
+    <SupportedOSPlatformVersion Condition="'$(CastrMobileTargets)' == 'true'">13.0</SupportedOSPlatformVersion>
+    <ApplicationTitle Condition="'$(CastrMobileTargets)' == 'true'">Castr</ApplicationTitle>
+    <ApplicationId Condition="'$(CastrMobileTargets)' == 'true'">com.castr.app</ApplicationId>
+
+    <!-- Empty stub for the workload-less path: compile nothing, reference nothing. -->
+    <EnableDefaultItems Condition="'$(CastrMobileTargets)' != 'true'">false</EnableDefaultItems>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(CastrMobileTargets)' == 'true'">
+    <PackageReference Include="Avalonia.iOS" Version="12.1.0" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(CastrMobileTargets)' == 'true'">
+    <ProjectReference Include="..\Castr.Gui\Castr.Gui.csproj" />
+    <ProjectReference Include="..\Castr.Core.Discovery\Castr.Core.Discovery.csproj" />
+  </ItemGroup>
+
+</Project>

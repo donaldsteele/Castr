@@ -19,5 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Castr.Core\Castr.Core.csproj" />
+    <!-- M4: the mobile receive flow (MobileReceiveViewModel) browses for peers via IServiceDiscovery. -->
+    <ProjectReference Include="..\Castr.Core.Discovery\Castr.Core.Discovery.csproj" />
   </ItemGroup>
 </Project>

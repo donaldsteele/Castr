@@ -190,6 +190,67 @@ public class MessageCodecTests
     }
 
     [Fact]
+    public void ManifestRequest_RoundTrips()
+    {
+        var decoded = MessageCodec.Decode(MessageCodec.Encode(new ManifestRequestMessage()));
+
+        Assert.IsType<ManifestRequestMessage>(decoded);
+    }
+
+    [Fact]
+    public void ChunkPullRequest_RoundTrips_WithIndices()
+    {
+        var message = new ChunkPullRequestMessage(Id(16), FileIndex: 3, ChunkIndices: [0, 5, 42, 99_999]);
+
+        var decoded = (ChunkPullRequestMessage)MessageCodec.Decode(MessageCodec.Encode(message));
+
+        Assert.Equal(message.SessionId, decoded.SessionId);
+        Assert.Equal(message.FileIndex, decoded.FileIndex);
+        Assert.Equal(message.ChunkIndices, decoded.ChunkIndices);
+    }
+
+    [Fact]
+    public void ChunkPullResponse_Found_RoundTrips_IncludingProof()
+    {
+        var leaves = new[] { ChunkHash.Compute("a"u8), ChunkHash.Compute("b"u8) };
+        var tree = MerkleTree.Build(leaves);
+        var message = new ChunkPullResponseMessage(Id(16), FileIndex: 0, ChunkIndex: 1, Found: true, Payload: [4, 5, 6], Proof: tree.GetProof(1));
+
+        var decoded = (ChunkPullResponseMessage)MessageCodec.Decode(MessageCodec.Encode(message));
+
+        Assert.True(decoded.Found);
+        Assert.Equal(message.SessionId, decoded.SessionId);
+        Assert.Equal(message.ChunkIndex, decoded.ChunkIndex);
+        Assert.Equal(message.Payload, decoded.Payload);
+        Assert.NotNull(decoded.Proof);
+        Assert.True(MerkleProof.Verify(tree.Root, leaves[1], decoded.Proof!));
+    }
+
+    [Fact]
+    public void ChunkPullResponse_NotFound_RoundTrips_WithNoPayloadOrProof()
+    {
+        var message = new ChunkPullResponseMessage(Id(16), 0, 7, Found: false, Payload: [], Proof: null);
+
+        var decoded = (ChunkPullResponseMessage)MessageCodec.Decode(MessageCodec.Encode(message));
+
+        Assert.False(decoded.Found);
+        Assert.Equal(7, decoded.ChunkIndex);
+        Assert.Empty(decoded.Payload);
+        Assert.Null(decoded.Proof);
+    }
+
+    [Fact]
+    public void KeyUnavailable_RoundTrips()
+    {
+        var message = new KeyUnavailableMessage(Id(16), Id(16));
+
+        var decoded = (KeyUnavailableMessage)MessageCodec.Decode(MessageCodec.Encode(message));
+
+        Assert.Equal(message.SessionId, decoded.SessionId);
+        Assert.Equal(message.ReceiverId, decoded.ReceiverId);
+    }
+
+    [Fact]
     public void Decode_UnsupportedVersion_Throws()
     {
         var bytes = MessageCodec.Encode(new TransferCompleteMessage(Id(16), Id(16), TransferOutcome.Completed));

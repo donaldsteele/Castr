@@ -1,0 +1,77 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Castr.Gui.ViewModels"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="700"
+             x:Class="Castr.Gui.Views.SwarmReceiveView"
+             x:DataType="vm:SwarmReceiveViewModel">
+
+    <Grid>
+        <!-- Main content -->
+        <ScrollViewer>
+            <StackPanel Spacing="12" Margin="16">
+                <TextBlock Text="Receive over the swarm" FontSize="20" FontWeight="SemiBold" />
+                <TextBlock Text="Pull a file from a Castr peer on your Wi-Fi network."
+                           TextWrapping="Wrap" Opacity="0.8" />
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Browse" Command="{Binding StartBrowsingCommand}" />
+                    <Button Content="Stop" Command="{Binding StopBrowsingCommand}" />
+                </StackPanel>
+
+                <TextBlock Text="Discovered peers:" FontWeight="SemiBold" />
+                <ListBox ItemsSource="{Binding Peers}"
+                         SelectedItem="{Binding SelectedPeer}"
+                         MinHeight="120" MaxHeight="240">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Spacing="2" Margin="2">
+                                <TextBlock Text="{Binding ServiceName}" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding Endpoint}" Opacity="0.7" FontSize="12" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Pull selected" Command="{Binding PullCommand}" />
+                    <Button Content="Cancel" Command="{Binding CancelPullCommand}" />
+                </StackPanel>
+
+                <TextBlock Text="{Binding Status}" TextWrapping="Wrap" />
+
+                <Border BorderBrush="#40808080" BorderThickness="1" CornerRadius="6" Padding="10"
+                        IsVisible="{Binding Progress.HasProgress}">
+                    <StackPanel Spacing="6" DataContext="{Binding Progress}"
+                                x:DataType="vm:TransferProgressViewModel">
+                        <TextBlock Text="{Binding PhaseText}" FontWeight="SemiBold" />
+                        <ProgressBar Minimum="0" Maximum="100" Value="{Binding Percent}" Height="18" />
+                        <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Trust-On-First-Use overlay: shown only while a decision is pending. -->
+        <Border Background="#B0000000"
+                IsVisible="{Binding Trust.Pending, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <Border Background="{DynamicResource ThemeBackgroundBrush}"
+                    CornerRadius="10" Padding="20" Margin="24"
+                    MaxWidth="360" VerticalAlignment="Center" HorizontalAlignment="Center"
+                    DataContext="{Binding Trust.Pending}"
+                    x:DataType="vm:TrustPromptViewModel">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="Trust this sender?" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Prompt}" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding SenderId}" FontFamily="monospace" FontSize="11"
+                               Opacity="0.7" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+                        <Button Content="Reject" Command="{Binding RejectCommand}" />
+                        <Button Content="Accept" Command="{Binding AcceptCommand}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Border>
+    </Grid>
+</UserControl>

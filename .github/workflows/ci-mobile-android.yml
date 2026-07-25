@@ -1,0 +1,102 @@
+name: CI (Mobile / Android)
+
+# Dedicated Android-head workflow, kept SEPARATE from ci.yml so it never races the cross-OS matrix (which
+# installs no mobile workloads) and so the sibling iOS work can evolve ci.yml independently. It builds the
+# net10.0-android head — which the default `dotnet build` deliberately skips (the project is listed in
+# Castr.sln without a solution Build.0 mapping, exactly because these runners are the only ones with an
+# Android SDK). Path-filtered so it runs only when the Android head or the code it depends on actually changes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/Castr.Gui.Android/**'
+      - 'src/Castr.Gui/**'
+      - 'src/Castr.Core.Discovery/**'
+      - 'src/Castr.Core/**'
+      - '.github/workflows/ci-mobile-android.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/Castr.Gui.Android/**'
+      - 'src/Castr.Gui/**'
+      - 'src/Castr.Core.Discovery/**'
+      - 'src/Castr.Core/**'
+      - '.github/workflows/ci-mobile-android.yml'
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # .NET Android (API 36 tooling) requires JDK 17.
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Provides the Android command-line SDK (sdkmanager) + ANDROID_HOME/ANDROID_SDK_ROOT, which the
+      # `android` workload does NOT itself bundle (this is exactly the local-machine gap noted in the roadmap).
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      # Only the `android` workload is installed. The `ios` workload deliberately is NOT — it cannot be
+      # installed on Linux at all ("Workload ID ios isn't supported on this platform"). This build never needs
+      # it: the Android head's ProjectReference to Castr.Core.Discovery scopes that reference to Discovery's
+      # net10.0-android TFM only (via AdditionalProperties), so Discovery's net10.0-ios TFM is never evaluated
+      # or restored here. We also do NOT pass CastrMobileTargets globally, which would otherwise flow into
+      # Castr.Gui's own Discovery reference and pull the ios TFM back into the graph restore.
+      - name: Install .NET Android workload
+        run: dotnet workload install android
+
+      # Let .NET Android provision the exact SDK platform/build-tools its target API needs, using the JDK +
+      # ANDROID_HOME set up above (avoids guessing API/build-tools versions by hand).
+      #
+      # -p:CastrAndroidTarget=true is required on every dotnet invocation below: restore evaluates
+      # Castr.Core.Discovery's own TargetFrameworks using the global properties passed to THIS build, so
+      # without it Discovery's own restore never includes net10.0-android and the later build step fails
+      # with NETSDK1005 even though the Android head's own ProjectReference looks correct. This is scoped
+      # to Android only (not the combined CastrMobileTargets flag) so it never adds Discovery's net10.0-ios
+      # TFM, which this runner has no ios workload to restore.
+      - name: Provision Android SDK dependencies
+        run: >
+          dotnet build src/Castr.Gui.Android/Castr.Gui.Android.csproj
+          -t:InstallAndroidDependencies
+          -f net10.0-android
+          -p:AcceptAndroidSdkLicenses=True
+          -p:CastrAndroidTarget=true
+
+      # The deliverable: the Android head compiles for net10.0-android. Its Discovery reference resolves the
+      # net10.0-android head of that library (the real NsdManager-backed NsdServiceDiscovery).
+      - name: Build Castr.Gui.Android (Release)
+        run: >
+          dotnet build src/Castr.Gui.Android/Castr.Gui.Android.csproj
+          -c Release
+          -f net10.0-android
+          -p:CastrAndroidTarget=true
+
+      # Produce a sideloadable APK artifact. NOTE: this is DEBUG-SIGNED (the SDK's default debug keystore),
+      # a CI-convenience / sideload artifact only — NOT a Play-Store-ready signed release. Proper release
+      # signing is M5 scope, matching how ci.yml's desktop `package` zips are documented as unsigned.
+      - name: Publish APK (Release, debug-signed)
+        run: >
+          dotnet publish src/Castr.Gui.Android/Castr.Gui.Android.csproj
+          -c Release
+          -f net10.0-android
+          -p:CastrAndroidTarget=true
+          -o ${{ github.workspace }}/artifacts/android
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: castr-android-apk
+          path: |
+            ${{ github.workspace }}/artifacts/android/**/*.apk
+            ${{ github.workspace }}/src/Castr.Gui.Android/bin/Release/net10.0-android/**/*.apk
+          if-no-files-found: warn

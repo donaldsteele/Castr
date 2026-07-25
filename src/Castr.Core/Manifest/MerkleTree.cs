@@ -16,6 +16,22 @@ public sealed record MerkleProof(int LeafIndex, int LeafCount, MerkleProofStep[]
 {
     public static bool Verify(ChunkHash root, ChunkHash leafHash, MerkleProof proof)
     {
+        // The proof's Steps cryptographically commit to a specific leaf position: each level's sibling-side
+        // (LSB-first) encodes the position's bits — a Left sibling means this node was the right child (bit 1),
+        // a Right sibling means it was the left child (bit 0). LeafIndex, by contrast, is a plaintext,
+        // wire-mutable field that Verify would otherwise never consult. Re-derive the committed position from
+        // the Steps and bind LeafIndex to it, so a relaying peer cannot keep a genuine chunk's Steps (which
+        // reproduce the real root) while rewriting LeafIndex to match a forged claimed position — the callers'
+        // "proof.LeafIndex must equal the claimed chunk index" guard is only sound once LeafIndex is itself
+        // authenticated against the Steps here. An attacker cannot instead alter the side pattern to derive a
+        // different index without changing which siblings combine, which breaks root recomputation below.
+        long derivedIndex = 0;
+        for (int level = 0; level < proof.Steps.Length; level++)
+            if (proof.Steps[level].SiblingSide == MerkleSide.Left)
+                derivedIndex |= 1L << level;
+        if (derivedIndex != proof.LeafIndex)
+            return false;
+
         var current = leafHash;
         foreach (var step in proof.Steps)
         {
