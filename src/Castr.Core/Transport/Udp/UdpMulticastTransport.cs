@@ -42,11 +42,23 @@ public sealed class UdpMulticastTransport : IMulticastTransport
     private readonly Channel<ReceivedPacket> _inbox;
     private readonly CancellationTokenSource _readerCts = new();
     private readonly Task _readerLoopTask;
+    private readonly DatagramFilter? _datagramFilter;
     private bool _disposed;
 
+    /// <param name="datagramFilter">
+    /// Optional per-datagram admission test applied in <see cref="ReceiveLoopAsync"/> <b>before</b> a
+    /// <see cref="ReceivedPacket"/> is allocated, so a rejected datagram costs neither a copy nor a slot in
+    /// <see cref="_inbox"/>. <see langword="null"/> (the default) accepts everything. Because
+    /// <c>MulticastLoopback</c> is on for both roles, a sender otherwise receives, copies, queues and decodes
+    /// its own entire transmission — see <see cref="DatagramFilter"/> and
+    /// <c>Castr.Core.Protocol.DatagramFilters</c>.
+    /// </param>
     public UdpMulticastTransport(
-        IPAddress groupAddress, int port, IPAddress? interfaceAddress = null, bool multicastLoopback = true, short timeToLive = 1)
+        IPAddress groupAddress, int port, IPAddress? interfaceAddress = null, bool multicastLoopback = true, short timeToLive = 1,
+        DatagramFilter? datagramFilter = null)
     {
+        _datagramFilter = datagramFilter;
+
         if (groupAddress.AddressFamily != AddressFamily.InterNetwork)
             throw new ArgumentException("Only IPv4 multicast groups are supported currently.", nameof(groupAddress));
 
@@ -138,9 +150,19 @@ public sealed class UdpMulticastTransport : IMulticastTransport
                 var received = await TryReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
                 if (received is null)
                     break; // socket cancelled/disposed/reset — shutting down
-                // TryReceiveAsync already copies the received bytes into ReceivedPacket's own array (see its
-                // body below), so `buffer` itself is safe to reuse for the next datagram — no allocation here.
-                await _inbox.Writer.WriteAsync(received, cancellationToken).ConfigureAwait(false);
+                var (receivedBytes, from) = received.Value;
+
+                // Admission test first, on the reusable receive buffer in place: a datagram this role can never
+                // act on is dropped here having cost nothing — no ReceivedPacket allocation, no _inbox slot, and
+                // no downstream MessageCodec.Decode. That is the whole point of the filter (see
+                // DatagramFilter's remarks); doing it after the copy or after queueing would defeat it.
+                if (_datagramFilter is not null && !_datagramFilter(buffer.AsSpan(0, receivedBytes)))
+                    continue;
+
+                // Copy out of `buffer` so it is safe to reuse for the next datagram. Kept here (rather than in
+                // TryReceiveAsync) so the filter above runs before the allocation, not after it.
+                var packet = new ReceivedPacket(buffer.AsSpan(0, receivedBytes).ToArray(), from);
+                await _inbox.Writer.WriteAsync(packet, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -163,12 +185,18 @@ public sealed class UdpMulticastTransport : IMulticastTransport
         }
     }
 
-    private async ValueTask<ReceivedPacket?> TryReceiveAsync(byte[] buffer, CancellationToken cancellationToken)
+    /// <summary>
+    /// Reads one datagram into <paramref name="buffer"/>, returning how many bytes landed and who sent it —
+    /// deliberately without copying, so <see cref="ReceiveLoopAsync"/> can run its <see cref="_datagramFilter"/>
+    /// against the buffer in place and skip the copy entirely for a rejected datagram. Null means the socket was
+    /// cancelled, disposed, or reset and the loop should end.
+    /// </summary>
+    private async ValueTask<(int ReceivedBytes, Endpoint From)?> TryReceiveAsync(byte[] buffer, CancellationToken cancellationToken)
     {
         try
         {
             var result = await _socket.ReceiveFromAsync(buffer, SocketFlags.None, _receiveTemplate, cancellationToken).ConfigureAwait(false);
-            return new ReceivedPacket(buffer.AsSpan(0, result.ReceivedBytes).ToArray(), Endpoint.FromIPEndPoint((IPEndPoint)result.RemoteEndPoint));
+            return (result.ReceivedBytes, Endpoint.FromIPEndPoint((IPEndPoint)result.RemoteEndPoint));
         }
         catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or SocketException)
         {

@@ -242,10 +242,71 @@ correct diagnosis at the wrong magnitude still misdirects effort.
 **Our design docs described defenses the code did not have.**
 `wiki/concepts/repair-protocol.md` specifies randomized jitter before a first repair request,
 exponential backoff on retry, NACK suppression by overhearing another receiver's request, and
-rate-limited repair responses. **None of the four are implemented.** Three review rounds read
-that page and the code without noticing they disagreed — which is plausibly *why* the repair
-behaviour went unexamined. Documentation that describes intent as though it were behaviour is
-worse than no documentation, because it stops people from looking.
+rate-limited repair responses. **None of the four were implemented** when this was written. Three
+review rounds read that page and the code without noticing they disagreed — which is plausibly
+*why* the repair behaviour went unexamined. Documentation that describes intent as though it were
+behaviour is worse than no documentation, because it stops people from looking. (Two of the four —
+jitter and backoff — were implemented on 2026-07-25; the table on that page now states which is
+which, and the entry below is what happened when the *fix* was measured.)
+
+**We claimed a 2× speedup that was a degraded host.** The M7 implementation's first report claimed
+**+112.6% goodput** from a warm, interleaved, n=3 A/B — methodologically correct by rules 1 and 3,
+and still wrong. Its own unfixed baseline measured 4.68 MiB/s against a documented warm baseline of
+13.65 MB/s for the same config on the same machine: 2.8× low, more than the 1.94× cache confounder
+explains. The "doubling" was recovery from whatever else was wrong with the host, and the post-fix
+absolute number was *slower* than the unfixed baseline it was being compared against. Rule 2 caught
+it — an independent reviewer did the arithmetic across two run sets, which the implementer, working
+only within its own internally-consistent set, had not. **New lesson: interleaving and warm-up make
+a comparison internally valid, but they say nothing about whether the host itself is in a sane
+state. Always sanity-check a new run set's baseline against the recorded baseline for the same
+config before interpreting any delta.** A row that cannot be reconciled with the existing log is a
+measurement problem until proven otherwise.
+
+**A recurring failure mode, not two incidents: we kept conflating "never reached" with "finished".**
+Both defects that mattered in the M7 repair work came from the same modelling error, and it is worth
+watching for by name rather than filing as two bugs. A receiver's repair valve has to decide whether a
+chunk it does not hold was *lost* or was simply *not sent yet* — and at the moment state is seeded,
+those two are indistinguishable from the receiver's data. Round 1 used one global last-activity timer,
+so multicast repair traffic from any peer masked a never-reached tail and **hung** a transfer with no
+adversary. Round 2 fixed that with per-file timers but seeded every file's at manifest acceptance,
+which for a sender that transmits files sequentially meant later files were treated as *finished*
+before they had *started* — the same conflation, opposite direction, and it **over-requested** exactly
+the traffic the change existed to remove. Neither reviewer predicted the second from the first, and
+the second passed a full suite plus one review round before being caught.
+
+The general shape to watch for: **any state machine that infers "done" from absence of evidence needs
+an explicit "not started" state**, and any seed value chosen so the code "just works at startup" is
+where that third state gets silently collapsed into one of the other two. When reviewing a timer,
+watermark, or idle heuristic, ask what it does *before the thing it is watching has begun* — that
+question would have caught both defects.
+
+**End-to-end tests cannot reliably assert what happened *during* a transfer.** Related, and it reaches
+past the change that surfaced it. An in-memory carousel completes in single-digit milliseconds, so any
+assertion about mid-carousel state — what repair asked for while the sender was still transmitting,
+what a receiver believed at 40% — is sampling a window shorter than the polling loop that observes it.
+Two such tests here passed with a live defect and looked like coverage. (The tempting explanation,
+that the receiver's state gate starves the repair pass, is wrong: `SemaphoreSlim.WaitAsync` queues
+FIFO, so a queued repair pass takes the gate at the next release. The window is simply too short to
+hit.) The correct shape for a mid-transfer property is to feed the session by hand against an injected
+clock and assert the decision directly; end-to-end runs should assert end states — completion,
+byte-identity, total traffic. This applies to the older repair tests too, which assert recovery
+outcomes and are sound, but should not be extended into mid-flight assertions.
+
+**Real-clock liveness tests on generous budgets flake under a loaded machine, and the flake is
+corrosive.** One such test here failed ~10% of the time under full-suite parallel execution (2 in 19
+runs) while being clean 14/14 standalone: its sender, receiver and repair tasks compete for the thread
+pool against seven other test projects, and a 30 s budget is not the margin it appears to be. Worth
+fixing rather than tolerating, because a flaky test *in an area the code has already been wrong in
+twice* teaches the team to re-run instead of investigate — which is how the original defects survived
+three review rounds. Prefer the hand-fed injected-clock form for anything asserting liveness.
+
+**We reached for a mechanism story to explain a number we should have distrusted.** Alongside the
+withdrawn claim, the same report argued the fix "preserved" the repair stream's incidental
+send-path parallelism, which would have explained why it did not see the predicted −11%. Its own
+duplicate-transmission count (−99.7%) directly refuted that: the stream was eliminated, not
+preserved. The number came first and the mechanism was fitted to it — the exact inversion of
+rule 3, which exists to make the prediction come first so a disagreement is visible as a finding
+rather than smoothed over as an explanation.
 
 ---
 
@@ -276,3 +337,17 @@ Work is in progress on the feedback and repair discipline of Approach F, tracked
 [`../wiki/synthesis/roadmap.md`](../wiki/synthesis/roadmap.md). Nothing there has merged; per rule 2
 it goes through independent QA and systems-design review first, and per the point above any fix to
 the amplification must be measured together with send batching rather than in isolation.
+
+An implementation of the repair-amplification, gossip-coalescing and own-echo fixes exists in a
+worktree and has been through two review rounds (see
+[`../wiki/synthesis/m7-repair-amplification.md`](../wiki/synthesis/m7-repair-amplification.md) and
+the 2026-07-25 M7 section of [`benchmarks/throughput-runs.md`](benchmarks/throughput-runs.md)). It
+is **not merged**, and what it demonstrates is narrower than what it first claimed: wire
+amplification 2.39× → 1.13×, duplicate chunk transmissions −99.7%, gossip fragments 20,557 → 68,
+the periodic stall gone, and two liveness bugs fixed — but **no established goodput gain**, and the
+−11% warning above still stands unrefuted. Round 1 of review also found a liveness *regression* the
+implementation had introduced (a global carousel-idle timer that any peer's multicast repair traffic
+could hold shut indefinitely, hanging a transfer with no adversary), which is worth recording as a
+rule-2 result in its own right: the failure was in a safety valve added to make a new optimisation
+sound, i.e. exactly the kind of second-order defect that only shows up when someone else writes the
+adversarial test.

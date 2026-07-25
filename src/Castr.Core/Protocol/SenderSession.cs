@@ -107,6 +107,11 @@ public sealed class SenderSession(
     private readonly int _sendWindowSize = sendWindowSize > 0
         ? sendWindowSize
         : throw new ArgumentOutOfRangeException(nameof(sendWindowSize), "Send window size must be positive.");
+
+    // Mirrors the receiver-side cap in RepairOptions.MaxChunksPerRequestFor, derived from the same datagram
+    // budget, so a well-behaved requester's whole batch is always served in one go and only an over-large batch
+    // (a buggy or hostile peer) is truncated. See HandleChunkRequestAsync for why the cap matters.
+    private readonly int _maxChunksPerRequest = RepairOptions.MaxChunksPerRequestFor(maxDatagramPayloadBytes);
     private int _sentChunks;
     private long _sentBytes;
     private bool _carouselComplete;
@@ -166,6 +171,20 @@ public sealed class SenderSession(
     /// <see cref="OperationCanceledException"/>) and fail-fast error propagation (an exception from
     /// <c>transport.SendAsync</c>, e.g. a too-large-datagram <see cref="System.Net.Sockets.SocketException"/>,
     /// stops the loop and rethrows — it is never swallowed).
+    ///
+    /// <para><b>LOAD-BEARING INVARIANT: files are sent strictly in index order, and receivers depend on it.</b>
+    /// <c>ReceiverSession</c>'s repair eligibility infers from "a later file has started" that an earlier file's
+    /// carousel already ran to completion, and therefore that any chunk of it still missing was lost rather than
+    /// simply not sent yet. That inference is what lets a fully-lost file be repaired without waiting out the
+    /// session-level idle threshold. Note the concurrency <i>within</i> a file (the windowed
+    /// <see cref="Parallel.ForEachAsync{TSource}(IEnumerable{TSource},ParallelOptions,Func{TSource,CancellationToken,ValueTask})"/>
+    /// below) is fine, and so would repeating the whole carousel in multiple rounds be — file <i>j</i> starting
+    /// still proves file <i>i</i>'s pass finished. What would break it is <b>parallelising across files</b>, the
+    /// obvious next pipelining step: interleaving two files' chunks makes "a later file started" stop implying
+    /// anything about an earlier one, and <b>no test would fail</b> — receivers would just quietly resume
+    /// requesting chunks the sender has not sent yet, which is the amplification this design exists to remove.
+    /// Anyone making that change must revisit <c>ReceiverSession.RequestRepairsAsync</c>'s <c>carouselMovedPast</c>
+    /// condition at the same time.</para>
     /// </summary>
     private async Task RunChunkCarouselAsync(CancellationToken ct)
     {
@@ -223,14 +242,27 @@ public sealed class SenderSession(
         if (!fileSources.TryGetValue(request.FileIndex, out var source) || !merkleTrees.TryGetValue(request.FileIndex, out var tree))
             return;
 
-        // Same windowed-concurrency rationale as RunChunkCarouselAsync: a bulk cold-start repair batch can
-        // legitimately span many thousands of chunk indices (see ChunkRequestMessage's UInt32 count widening,
-        // wiki/synthesis/m1-core-summary.md), so this benefits from the same pipelining rather than one
-        // sequential await per requested chunk. This is independently windowed from the carousel (see
-        // _sendWindowSize's doc comment for the known, deliberately-not-fixed double-counting limitation that
-        // follows from that).
+        // Bound how much one request can make this handler do. It is awaited inline from HandleIncomingAsync, so
+        // for as long as it runs no further CHUNK_REQUEST or JOIN_REQUEST is processed at all — a huge batch
+        // head-of-line blocks the receive loop, and a receiver's lost KEY_GRANT retry then sits behind however
+        // long it takes to re-read, re-encrypt, re-prove and re-multicast the whole batch (~10 s for a
+        // cold-start-sized one). Capping at the same per-request ceiling the receiver plans to
+        // (RepairOptions.MaxChunksPerRequestFor over the same datagram budget) bounds that blocking without
+        // penalizing any well-behaved requester, whose batches are already at or under the cap because a larger
+        // request could not have fitted in one datagram. Anything beyond the cap is dropped rather than queued:
+        // the requester's own repair timer will re-ask for whatever is still missing, so nothing is lost — and
+        // dispatching the overflow onto a background task instead was deliberately NOT done here, since it adds
+        // real concurrency risk for a case the cap already makes rare.
+        var servedIndices = request.ChunkIndices.Length <= _maxChunksPerRequest
+            ? request.ChunkIndices
+            : request.ChunkIndices[.._maxChunksPerRequest];
+
+        // Same windowed-concurrency rationale as RunChunkCarouselAsync: this benefits from the same pipelining
+        // rather than one sequential await per requested chunk. This is independently windowed from the carousel
+        // (see _sendWindowSize's doc comment for the known, deliberately-not-fixed double-counting limitation
+        // that follows from that).
         var sendOptions = new ParallelOptions { MaxDegreeOfParallelism = _sendWindowSize, CancellationToken = ct };
-        await Parallel.ForEachAsync(request.ChunkIndices, sendOptions, async (chunkIndex, token) =>
+        await Parallel.ForEachAsync(servedIndices, sendOptions, async (chunkIndex, token) =>
             await SendChunkAsync(request.FileIndex, chunkIndex, source, tree, request.RequestNonce, token).ConfigureAwait(false))
             .ConfigureAwait(false);
     }

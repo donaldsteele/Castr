@@ -85,6 +85,10 @@ public class LargeChunkTransferTests
             : rawReceiverTransport;
 
         var peerTable = new PeerTable();
+        // Deliberately on the shipped randomized jitter with an unseeded Random.Shared, over a real socket and a
+        // real clock — together with RealTransferRepairTests this is the only integration coverage of the wall-
+        // clock jitter behaving under genuine timing. Headroom is empirical (~10x measured), not structural: if
+        // this flakes, suspect the jitter draw before widening the timeout.
         var repairCoordinator = new RepairCoordinator(peerTable, SystemClock.Instance, new RepairOptions(TimeSpan.FromSeconds(2)));
 
         MemoryFileSink? sink = null;

@@ -64,6 +64,14 @@ public class RealTransferRepairTests
         // so RepairCoordinator's timeout-based retry needs time to actually advance to re-plan a repair
         // request whose response was also lost to the induced chaos. Shorter-than-default timeout so
         // enough retry rounds fit inside the test's overall time budget.
+        //
+        // NOTE: this is deliberately left on the shipped randomized jitter (RepairOptions defaults for
+        // InitialRequestJitter and RetryJitterFraction) with an unseeded Random.Shared — it is one of only two
+        // places the wall-clock jitter runs uncontrolled over a real socket, which is exactly the integration
+        // coverage worth having. The margin is wide (a 2 s base timeout and up to 500 ms of first-request jitter
+        // against a 20 s budget, measured at ~10x headroom), but the margin is empirical rather than structural:
+        // if this ever flakes, suspect the jitter draw first and inject a seeded Random rather than widening the
+        // timeout blindly.
         var peerTable = new PeerTable();
         var repairCoordinator = new RepairCoordinator(peerTable, SystemClock.Instance, new RepairOptions(TimeSpan.FromSeconds(2)));
 

@@ -323,3 +323,125 @@ be made dynamic. Everything else green: 282/283 Core, plus 16/16, 14/14, 30/30, 
 
 Instrumentation lives in `tools/bench-m7/` plus a `BenchMetrics` type, inert unless `CASTR_BENCH`
 is set (branch `worktree-agent-aad9c2ea41236900d`, uncommitted).
+
+---
+
+## 2026-07-25 — M7 implementation A/B (P2 filters, P1 PEER_HAVE coalescing, P0 repair bounding)
+
+Measured by the **implementer** of the change — not an independent party; weigh accordingly.
+Real two-process `castr send` / `castr receive`, Release binaries published per stage, own
+multicast group (239.192.57.60) and rotating ports. Warm: one discarded warm-up per stage, then
+**stages interleaved within each rep**, n=3, so page-cache state and machine drift hit every stage
+equally. Wire figures come from a passive external sniffer that joins the group read-only and
+counts datagrams by `MessageType` — no product-code instrumentation, deliberately independent of
+the `BenchMetrics` harness above.
+
+Stages are cumulative: `stage1 = stage0 + P2`, `stage2 = stage1 + P1`, `stage3 = stage2 + P0`.
+`stage4` is `stage3` with only the carousel watermark disabled, to isolate it.
+
+### ⚠️ Host state was degraded — goodput figures here are NOT comparable to the campaign above
+
+This run set's own unfixed baseline measured **4.68 MiB/s (≈4.9 MB/s)** against the campaign's warm
+baseline of **13.65 MB/s** for the same config on the same machine. That is 2.8× low — far more than
+the ~1.94× cold/warm page-cache confounder explains, so something else was also wrong (concurrent
+load from a second agent benchmarking the same box is the most likely cause; not isolated).
+**Every absolute MB/s figure below should be treated as invalid**, and the relative goodput column
+as a property of a degraded host rather than of the change.
+
+| Stage | goodput MiB/s (median, n=3) | wall s | stalls ≥400 ms | stall ms | period ms | wire | amp | dup chunk dgrams |
+|---|---|---|---|---|---|---|---|---|
+| stage0 baseline | 4.68 (4.68–4.71) | 19.28 | 24 | 468 | 695 | 191.1 MB | 2.39× | 120,060 |
+| stage1 +P2 | 4.63 (4.61–4.64) | 19.58 | 25 | 466 | 684 | 192.0 MB | 2.40× | 121,224 |
+| stage2 +P1 | 5.07 (5.00–5.07) | 18.03 | 21 | 444 | 695 | 178.1 MB | 2.23× | 120,589 |
+| stage4 +P0 minus watermark | 5.12 (5.09–5.13) | 17.92 | 20 | 446 | 771 | 176.2 MB | 2.20× | 117,999 |
+| stage3 +P0 full | 9.96 (9.73–9.98) | 10.29 | **0** | 0 | — | **90.1 MB** | **1.13×** | **324** |
+
+Wire composition (datagram counts, median run per stage):
+
+| Stage | PACKET_FRAGMENT | CHUNK_PACKET | CHUNK_REQUEST | JOIN / KEY_GRANT |
+|---|---|---|---|---|
+| stage0 baseline | 20,558 | 245,760 | 0 | 2 / 2 |
+| stage1 +P2 | 20,557 | 245,076 | 0 | 1 / 1 |
+| stage2 +P1 | **161** | 243,469 | 1 | 1 / 1 |
+| stage4 | 90 | 241,569 | 60 | 1 / 1 |
+| stage3 +P0 full | **68** | **123,228** | 29 | 1 / 1 |
+
+320 MB, n=2, baseline vs stage3: wire **980.5 MB → 384.9 MB** (2.92× → 1.15× amplification),
+duplicate chunk datagrams **567,831 → 1,862**, PEER_HAVE fragment gossip **218.5 MB → 0.79 MB**.
+The wire byte-rate series flattens from a 7–15 MiB/s sawtooth to 9.6–10.4 MiB/s in every 1 s bucket.
+Every run in every stage delivered a byte-identical file.
+
+### What this run set does and does not support
+
+**Supported:**
+
+- **Wire amplification 2.39× → 1.13×** on an 80 MB lossless transfer; 2.92× → 1.15× at 320 MB. This
+  lands almost exactly on the campaign's `repair off + PEER_HAVE off` row (1.12×) — a useful
+  cross-check between two independently built measurement rigs.
+- **Duplicate chunk transmissions −99.7%** (120,060 → 324 datagrams at 80 MB).
+- **~100 MB of wire traffic removed per 80 MB transfer**; ~596 MB per 320 MB transfer.
+- **PEER_HAVE fragment gossip effectively eliminated** — 20,557 → 68 datagrams, i.e. the quadratic
+  term is gone rather than merely reduced. P1 coalesces rather than disables, so discovery is kept.
+- **The periodic stall pattern is gone.** 24–25 stalls of ~468 ms on a ~695 ms period → 0, with the
+  wire busy at ~10 MiB/s *throughout* the baseline's stalls — i.e. the receiver was drowning in
+  duplicates, not waiting on an idle network. This claim rests on mechanism, not on the goodput
+  column, and both round-2 reviewers accepted it independently.
+
+**Not supported — explicitly withdrawn:**
+
+- ~~"+112.6% goodput / 2.13×"~~. **Retracted.** stage3's 9.96 MiB/s ≈ 10.4 MB/s is *slower* than the
+  campaign's unfixed warm baseline (13.65 MB/s) and slower than its `repair off` row (12.12 MB/s).
+  The doubling measured here is recovery from a degraded host state, not an absolute gain.
+  **Treat the net goodput effect of this change as unresolved.**
+- The campaign's ⚠️ finding that removing premature repair costs **−11%** (the redundant repair
+  stream being the sender's only send-path parallelism) is **not refuted** by this run set. Its
+  arithmetic stands: base pushes 282,054 dgrams / 5.86 s = 48,132/s vs repair-off 143,364 / 6.60 s
+  = 21,722/s — 2.22× the datagram rate. This run set's ~10 MiB/s ≈ 9–11k dgrams/s is a *quarter* of
+  that, so a "wire rate stayed pinned" reading offered here originally was an artifact of the
+  degraded host and is withdrawn too.
+- An earlier hypothesis that the watermark *preserves* the repair stream for genuine gaps (and so
+  keeps its incidental parallelism) is **refuted by this run set's own data**: on a lossless loopback
+  path there are no below-watermark gaps, and the 120,060 → 324 duplicate drop is the measurement
+  proving the repair stream was eliminated, not preserved.
+- One untested explanation worth recording: **P2 is a lever the campaign never measured** and may be
+  offsetting some of the predicted −7…−11%. Not isolated, and not claimed.
+
+### P2 is a correctness fix, and must not borrow credit from P1
+
+P2 alone measured **−1.3%** (4.68 → 4.63 MiB/s) — a wash, inside run-to-run noise — and its wire
+composition is essentially unchanged from baseline: PACKET_FRAGMENT **20,558 → 20,557**,
+CHUNK_PACKET 245,760 → 245,076. That is the expected result, not a disappointing one: at the 8 KiB
+default chunk size the fragments in flight are almost entirely **PEER_HAVE**, and *both* role filters
+must accept `PacketFragment` (a fragment carries no information about the type it will reassemble
+into). So P2 cannot reduce fragment traffic even in principle. **The fragment collapse to 161 arrives
+at stage2 and belongs entirely to P1.**
+
+**P2's justification is therefore correctness, full stop: closing the >90% `CHUNK_REQUEST` /
+`JOIN_REQUEST` drop rate at the sender** that the 91-run campaign measured (282,054 datagrams
+offered to the sender's own socket, 20,707 seen). It should not be credited with any share of the
+throughput or amplification numbers above. The only external evidence this rig could produce for it
+is weak — the baseline needed a JOIN_REQUEST retry in 1 of 3 runs and P2 in 0 of 3 (see the
+JOIN/KEY_GRANT column), n=3, suggestive at best. Measuring the sender-side inbox drop rate directly
+requires the `BenchMetrics` harness.
+
+### Watermark isolated (stage4 vs stage3)
+
+Cap + mark-after-send + backoff + jitter, with only the watermark disabled, moved goodput +1.0% and
+amplification 2.23× → 2.20× — within noise. **The watermark accounts for essentially the entire
+amplification reduction.** Round 2 therefore added `RepairOptions.MaxRequestsPerPass` (default 4) so
+amplification has a bound that does not depend on the watermark being right; before that, any
+false-idle in the valve restored the full storm, self-reinforcingly.
+
+### What to measure next
+
+A warm, interleaved, n≥3 A/B **on a host that reproduces the campaign's 13.65 MB/s baseline**,
+ideally by someone who did not write the change. Until then the merge case rests on amplification,
+stall elimination and the two liveness fixes — not on throughput.
+
+### Test-suite note
+
+`UdpMulticastTransportTests`' hardcoded ports are now dynamic (`FreeUdpPort()` asks the OS for a
+bindable ephemeral port), closing the known issue recorded above. Root cause confirmed:
+`DnsService` (PID 5208 on this host) holds UDP 46101. The test still binds real sockets and asserts
+real delivery. Suite after round 2: **431 passed, 3 skipped (container E2E), 0 failed, 0 warnings**,
+stable across 5 consecutive full-suite runs.

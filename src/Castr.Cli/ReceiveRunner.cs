@@ -76,8 +76,11 @@ internal static class ReceiveRunner
 
         try
         {
-            await using IMulticastTransport transport =
-                new UdpMulticastTransport(options.Group, options.Port, interfaceAddress, options.MulticastLoopback);
+            // A receiver accepts everything except another receiver's JOIN_REQUEST, which only the sender can
+            // answer. See Castr.Core.Protocol.DatagramFilters.
+            await using IMulticastTransport transport = new UdpMulticastTransport(
+                options.Group, options.Port, interfaceAddress, options.MulticastLoopback,
+                datagramFilter: DatagramFilters.Receiver);
 
             var session = new ReceiverSession(
                 receiverId, trustStore, transport, SystemClock.Instance, sessionOptions,

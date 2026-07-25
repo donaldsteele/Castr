@@ -1,4 +1,5 @@
 using System.Net;
+using Castr.Core.Protocol;
 using Castr.Core.Transport;
 using Castr.Core.Transport.Udp;
 
@@ -20,7 +21,13 @@ public sealed class UdpTransportFactory(IPAddress? group = null, int port = 4501
     private readonly IPAddress _group = group ?? DefaultGroup;
     private readonly int _port = port;
 
-    public IMulticastTransport CreateSenderTransport() => new UdpMulticastTransport(_group, _port);
+    // Both roles pass a role-appropriate DatagramFilter for exactly the reason this factory's own summary
+    // describes: multicast loopback is on, so a sender's socket hands back everything the sender just sent.
+    // Without the filter that echo is copied, queued, and fully decoded before being discarded — starving the
+    // real CHUNK_REQUEST/JOIN_REQUEST control traffic. See Castr.Core.Protocol.DatagramFilters.
+    public IMulticastTransport CreateSenderTransport() =>
+        new UdpMulticastTransport(_group, _port, datagramFilter: DatagramFilters.Sender);
 
-    public IMulticastTransport CreateReceiverTransport() => new UdpMulticastTransport(_group, _port);
+    public IMulticastTransport CreateReceiverTransport() =>
+        new UdpMulticastTransport(_group, _port, datagramFilter: DatagramFilters.Receiver);
 }
