@@ -19,9 +19,23 @@
       only and never touches the mobile toolchains. The platform implementations
       (NsdServiceDiscovery.Android.cs / NetworkServiceDiscovery.iOS.cs) and this multi-targeting are
       fully authored either way — the flag only controls which heads a given build actually compiles.
+
+      CastrAndroidTarget / CastrIosTarget are narrower single-platform variants of the same switch.
+      They exist because restore (not just build) evaluates THIS project's own TargetFrameworks using
+      THIS project's own global properties — a downstream ProjectReference's SetTargetFramework or
+      AdditionalProperties overrides only how the CONSUMER selects among already-restored frameworks,
+      it cannot retroactively add a framework that this project's own restore never evaluated (that
+      was a real bug: the Android CI leg tried exactly that and got NETSDK1005, "assets file doesn't
+      have a target for net10.0-android", even though the consumer-side reference override was
+      correct). The dedicated Android CI runner has no ios workload installed at all, so a plain
+      CastrMobileTargets=true there would break restore outright trying to evaluate net10.0-ios; the
+      dedicated iOS CI runner installs both workloads (see ci-mobile-ios.yml) so it can keep using the
+      combined CastrMobileTargets=true flag unchanged.
     -->
     <TargetFrameworks>net10.0</TargetFrameworks>
     <TargetFrameworks Condition="'$(CastrMobileTargets)' == 'true'">net10.0;net10.0-android;net10.0-ios</TargetFrameworks>
+    <TargetFrameworks Condition="'$(CastrMobileTargets)' != 'true' And '$(CastrAndroidTarget)' == 'true'">net10.0;net10.0-android</TargetFrameworks>
+    <TargetFrameworks Condition="'$(CastrMobileTargets)' != 'true' And '$(CastrIosTarget)' == 'true'">net10.0;net10.0-ios</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>

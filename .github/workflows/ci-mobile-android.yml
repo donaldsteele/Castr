@@ -57,12 +57,20 @@ jobs:
 
       # Let .NET Android provision the exact SDK platform/build-tools its target API needs, using the JDK +
       # ANDROID_HOME set up above (avoids guessing API/build-tools versions by hand).
+      #
+      # -p:CastrAndroidTarget=true is required on every dotnet invocation below: restore evaluates
+      # Castr.Core.Discovery's own TargetFrameworks using the global properties passed to THIS build, so
+      # without it Discovery's own restore never includes net10.0-android and the later build step fails
+      # with NETSDK1005 even though the Android head's own ProjectReference looks correct. This is scoped
+      # to Android only (not the combined CastrMobileTargets flag) so it never adds Discovery's net10.0-ios
+      # TFM, which this runner has no ios workload to restore.
       - name: Provision Android SDK dependencies
         run: >
           dotnet build src/Castr.Gui.Android/Castr.Gui.Android.csproj
           -t:InstallAndroidDependencies
           -f net10.0-android
           -p:AcceptAndroidSdkLicenses=True
+          -p:CastrAndroidTarget=true
 
       # The deliverable: the Android head compiles for net10.0-android. Its Discovery reference resolves the
       # net10.0-android head of that library (the real NsdManager-backed NsdServiceDiscovery).
@@ -71,6 +79,7 @@ jobs:
           dotnet build src/Castr.Gui.Android/Castr.Gui.Android.csproj
           -c Release
           -f net10.0-android
+          -p:CastrAndroidTarget=true
 
       # Produce a sideloadable APK artifact. NOTE: this is DEBUG-SIGNED (the SDK's default debug keystore),
       # a CI-convenience / sideload artifact only — NOT a Play-Store-ready signed release. Proper release
@@ -80,6 +89,7 @@ jobs:
           dotnet publish src/Castr.Gui.Android/Castr.Gui.Android.csproj
           -c Release
           -f net10.0-android
+          -p:CastrAndroidTarget=true
           -o ${{ github.workspace }}/artifacts/android
 
       - name: Upload APK artifact

@@ -43,20 +43,17 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Castr.Gui\Castr.Gui.csproj" />
-    <ProjectReference Include="..\Castr.Core.Discovery\Castr.Core.Discovery.csproj">
-      <!--
-        Pin THIS reference to Discovery's net10.0-android inner build via the documented SetTargetFramework
-        mechanism (not AdditionalProperties=TargetFrameworks=..., which overrides the plural outer-build
-        property but is not honored by NuGet's restore graph walk, leaving project.assets.json without a
-        net10.0-android target — NETSDK1005 at build time even though the build itself looked fine).
-        SetTargetFramework passes a single TargetFramework global property straight to Discovery's inner
-        build for this reference, bypassing outer-build TFM selection entirely, so it does not depend on
-        (and does not need) Discovery's CastrMobileTargets switch or its net10.0-ios TFM at all — safe on a
-        Linux runner with no ios workload installed. Castr.Gui keeps its plain net10.0 reference to the same
-        project, unaffected.
-      -->
-      <SetTargetFramework>TargetFramework=net10.0-android</SetTargetFramework>
-    </ProjectReference>
+    <!--
+      Plain reference, no per-reference TFM override needed. Restore evaluates Castr.Core.Discovery's own
+      TargetFrameworks using the global properties THIS BUILD passes (see ci-mobile-android.yml, which
+      passes -p:CastrAndroidTarget=true), so Discovery's own restore already includes net10.0-android — at
+      that point ordinary ProjectReference negotiation just picks the matching net10.0-android head for
+      this net10.0-android consumer. An earlier attempt tried to add net10.0-android purely on the consumer
+      side (via AdditionalProperties, then SetTargetFramework) without ever passing CastrAndroidTarget to
+      Discovery's own restore — both failed with NETSDK1005, since a consumer-side override cannot
+      retroactively add a framework the referenced project's own restore never evaluated.
+    -->
+    <ProjectReference Include="..\Castr.Core.Discovery\Castr.Core.Discovery.csproj" />
   </ItemGroup>
 
 </Project>
