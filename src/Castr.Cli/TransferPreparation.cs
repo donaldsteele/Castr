@@ -15,8 +15,9 @@ internal sealed record PreparedTransfer(
     Key SenderEncryptionKey,
     ContentKey ContentKey) : IDisposable
 {
-    public SenderSession CreateSession(Castr.Core.Transport.IMulticastTransport transport) =>
-        new(Signed, Sources, Trees, transport, SenderEncryptionKey, ContentKey);
+    public SenderSession CreateSession(
+        Castr.Core.Transport.IMulticastTransport transport, int sendWindowSize = SenderSession.DefaultSendWindowSize) =>
+        new(Signed, Sources, Trees, transport, SenderEncryptionKey, ContentKey, sendWindowSize: sendWindowSize);
 
     public void Dispose()
     {

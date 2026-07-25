@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Net;
 using Spectre.Console;
+using Castr.Core.Protocol;
 using Castr.Core.Trust;
 
 namespace Castr.Cli;
@@ -74,10 +75,17 @@ internal static class CastrCli
             Description = "Path to the persistent Ed25519 sender identity key (created if absent).",
             DefaultValueFactory = _ => CastrPaths.DefaultIdentityPath,
         };
+        var sendWindowSize = new Option<int>("--send-window-size")
+        {
+            Description = "Max concurrent in-flight chunk sends (1 = today's sequential behavior). " +
+                "The safe value is receiver-hardware/network-dependent — see SenderSession.DefaultSendWindowSize's " +
+                "doc comment before raising this above the default.",
+            DefaultValueFactory = _ => SenderSession.DefaultSendWindowSize,
+        };
 
         var command = new Command("send", "Send a file over multicast.")
         {
-            fileArg, group, port, iface, tui, chunkSize, identity,
+            fileArg, group, port, iface, tui, chunkSize, identity, sendWindowSize,
         };
         command.SetAction((parseResult, ct) => SendRunner.RunAsync(
             new SendOptions(
@@ -87,7 +95,8 @@ internal static class CastrCli
                 parseResult.GetValue(iface),
                 parseResult.GetValue(chunkSize),
                 parseResult.GetValue(identity)!,
-                parseResult.GetValue(tui)),
+                parseResult.GetValue(tui),
+                SendWindowSize: parseResult.GetValue(sendWindowSize)),
             console, ct));
         return command;
     }

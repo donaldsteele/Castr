@@ -38,34 +38,61 @@ public sealed class SenderSession(
     /// Default bound on concurrent in-flight <c>transport.SendAsync</c> calls for the chunk carousel and
     /// chunk-repair batches (see <see cref="RunChunkCarouselAsync"/> and <see cref="HandleChunkRequestAsync"/>).
     ///
-    /// This value is a deliberately conservative, evidence-based compromise, not a proven optimum — see the
-    /// M6 write-up in wiki/synthesis/roadmap.md for the full benchmark data. Two real-socket loopback-UDP
-    /// benchmarks (an in-process harness and, more importantly, real separate <c>castr send</c>/<c>castr
-    /// receive</c> processes matching actual CLI usage) both showed the *same* non-obvious shape: throughput
-    /// does **not** monotonically improve with more concurrency. A window of 1-2 is roughly neutral-to-positive
-    /// (occasionally ~1.8x faster, occasionally a wash, rarely a bit worse); a window of 3-4 is a consistent,
-    /// significant regression (2-5x *slower*); and a window in the tens (64 was the first value tried) can
-    /// make an 80 MB transfer effectively stall — the sender finishes its whole carousel while the receiver is
-    /// still under 40% complete, because per-chunk repair recovery (5s default retry timeout) is far more
-    /// expensive than the syscall overhead this change set out to remove.
+    /// <b>Deliberately 1 — a true no-op relative to pre-M6 behavior</b>, not a tuned "improvement" default. See
+    /// the M6 write-up in wiki/synthesis/roadmap.md for the full three-round benchmark history before changing
+    /// this. Round 1 shipped a higher default (2) based on real-socket measurements that looked like a net win;
+    /// independent QA re-measured more thoroughly and found it was actually a consistent ~1.8-2.7x *regression*
+    /// versus window=1 on that round's receive path, not the "roughly neutral, occasionally faster" picture the
+    /// smaller round-1 sample suggested. Root cause (confirmed by both QA and a systems-design review, and
+    /// verified again first-hand): the fully-sequential pre-M6 send loop was accidentally providing flow
+    /// control — each awaited send's own latency naturally paced packet emission to what
+    /// <see cref="ReceiverSession.RunAsync"/>'s single serialized per-packet chain (Merkle/AEAD verify, disk
+    /// write, outbound PEER_HAVE broadcast, all under one lock) could keep up with, and
+    /// <see cref="Castr.Core.Transport.Udp.UdpMulticastTransport"/>'s receive loop had no decoupling from that
+    /// chain either — so the OS receive buffer only drained as fast as the whole chain ran. Round 2 fixed that
+    /// receive-side bottleneck directly (a dedicated socket-reader task feeding a bounded channel, plus
+    /// explicit larger socket buffers — see <c>UdpMulticastTransport.SocketBufferBytes</c>/<c>InboxCapacity</c>)
+    /// and re-measured: with that fix in place, window=2 became a consistent, real ~1.4-1.6x win in both a 1:1
+    /// benchmark and a 3-receiver (one deliberately throttled to a single, low-priority CPU core) fan-out
+    /// benchmark — no collapse, every receiver always finished byte-identical — while window≥4 still gave the
+    /// gain back (roughly back to window=1's own throughput, not a catastrophic regression like round 1's
+    /// window≥3, but not better either).
     ///
-    /// The likely mechanism: the old fully-sequential send loop was accidentally providing flow control — each
-    /// awaited send's own latency naturally paced packet emission to roughly what <see cref="ReceiverSession"/>'s
-    /// single-threaded receive loop can synchronously decode/verify/write. Concurrent sending removes that
-    /// accidental pacing; past a small window the sender can emit faster than the receiver drains, overflowing
-    /// the OS UDP receive buffer, and a single dropped packet stalls its whole chunk until repair recovers it.
-    /// A larger safe window likely requires either a faster/parallel receive path or explicit congestion
-    /// awareness on the send side — both out of scope for this change (send-path-only, no protocol changes).
+    /// Despite that genuinely encouraging round-2 data, the shipped default stays at 1: this specific value (2)
+    /// has now been wrong once already on a plausible-looking, smaller sample, and one more (larger, still
+    /// single-machine) benchmarking pass is not the same as a second opinion from someone who didn't run the
+    /// numbers. window=1 is not merely "safe" by assumption, either: <see cref="RunAsync"/> already ran the
+    /// carousel and the JOIN/repair listener as two concurrently-scheduled tasks (via <c>Task.WhenAll</c>)
+    /// before this whole pipelining change existed, so their sends could already interleave on the wire — a
+    /// window of 1 on each of <see cref="RunChunkCarouselAsync"/> and <see cref="HandleChunkRequestAsync"/>
+    /// independently reproduces exactly that pre-existing concurrency, no more and no less, which is why it is
+    /// a genuine no-op rather than a new, unvalidated behavior.
     ///
-    /// Given a real, measured downside (not just an unproven upside) at this exact default on the CLI's own
-    /// default chunk size, this default deserves a second opinion before being trusted as "correct" — see the
-    /// M6 write-up for the full trial-by-trial numbers.
+    /// The <see cref="Parallel.ForEachAsync{TSource}(IEnumerable{TSource},ParallelOptions,Func{TSource,CancellationToken,ValueTask})"/>-based
+    /// windowing mechanism itself is intact, tested (see <c>SenderSessionPipeliningTests</c>), and available to
+    /// any caller that has validated a higher window for their own receiver hardware/network — this constant is
+    /// only the shipped default, not a ceiling. Bumping it to 2 by default is the natural next step once someone
+    /// independent has looked at the round-2 numbers.
     /// </summary>
-    public const int DefaultSendWindowSize = 2;
+    public const int DefaultSendWindowSize = 1;
 
     private readonly object _progressGate = new();
     private readonly HashSet<string> _grantedReceivers = [];
     private readonly PacketReassembler _reassembler = new();
+    // Known limitation, deliberately not fixed here: RunChunkCarouselAsync and HandleChunkRequestAsync each
+    // gate on their own independent ParallelOptions.MaxDegreeOfParallelism = _sendWindowSize, so a chunk-repair
+    // burst arriving while the carousel is still running can transiently push real concurrent
+    // transport.SendAsync calls to up to 2x _sendWindowSize, not a hard-enforced single window. A shared
+    // SemaphoreSlim gate across both loops was prototyped and does close this gap, but cost a measured ~30%
+    // real-socket throughput regression (repeated back-to-back A/B on the same benchmark: ~11 MB/s with the
+    // gate bypassed vs. ~7.6 MB/s with it, at window=2, 80 MB/8192-byte-chunk, no contention even happening in
+    // that test) — the extra SemaphoreSlim.WaitAsync/Release pair per chunk is not free even when it never
+    // actually blocks, at the "once per chunk, tens of thousands of chunks" call frequency this is on. Given
+    // the double-counting scenario is narrow (needs simultaneous heavy repair traffic during the main
+    // carousel) and the fix's cost directly undermines M6's actual goal (throughput), it was not shipped — see
+    // the M6 write-up in wiki/synthesis/roadmap.md. Worth reconsidering with a cheaper gating primitive (e.g. a
+    // manually-managed counter/lock rather than SemaphoreSlim) if the double-counting ever proves to matter in
+    // practice.
     private readonly int _sendWindowSize = sendWindowSize > 0
         ? sendWindowSize
         : throw new ArgumentOutOfRangeException(nameof(sendWindowSize), "Send window size must be positive.");
@@ -188,7 +215,9 @@ public sealed class SenderSession(
         // Same windowed-concurrency rationale as RunChunkCarouselAsync: a bulk cold-start repair batch can
         // legitimately span many thousands of chunk indices (see ChunkRequestMessage's UInt32 count widening,
         // wiki/synthesis/m1-core-summary.md), so this benefits from the same pipelining rather than one
-        // sequential await per requested chunk.
+        // sequential await per requested chunk. This is independently windowed from the carousel (see
+        // _sendWindowSize's doc comment for the known, deliberately-not-fixed double-counting limitation that
+        // follows from that).
         var sendOptions = new ParallelOptions { MaxDegreeOfParallelism = _sendWindowSize, CancellationToken = ct };
         await Parallel.ForEachAsync(request.ChunkIndices, sendOptions, async (chunkIndex, token) =>
             await SendChunkAsync(request.FileIndex, chunkIndex, source, tree, request.RequestNonce, token).ConfigureAwait(false))
