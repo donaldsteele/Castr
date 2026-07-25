@@ -22,7 +22,7 @@ namespace Castr.Gui.Android;
 /// <see cref="SwarmReceiveViewModel"/> onto an <c>ISingleViewApplicationLifetime</c> main view, backed by the
 /// native <see cref="NsdServiceDiscovery"/> and real TCP.
 /// </summary>
-public partial class App : Application
+public partial class App : Avalonia.Application
 {
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
