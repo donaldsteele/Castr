@@ -45,15 +45,17 @@
     <ProjectReference Include="..\Castr.Gui\Castr.Gui.csproj" />
     <ProjectReference Include="..\Castr.Core.Discovery\Castr.Core.Discovery.csproj">
       <!--
-        Scope THIS reference to build only Discovery's net10.0-android TFM. Discovery's own multi-targeting
-        (its CastrMobileTargets switch) would otherwise also add net10.0-ios, whose .NET workload cannot be
-        installed on a Linux CI runner ("Workload ID ios isn't supported on this platform"), which breaks a
-        graph restore. We only need the Android head of Discovery (the NsdManager-backed NsdServiceDiscovery),
-        so we override TargetFrameworks for this reference alone — Castr.Gui keeps its plain net10.0 reference
-        to the same project. This deliberately avoids setting CastrMobileTargets as a GLOBAL build property
-        (which would flow into Castr.Gui's Discovery reference and re-introduce the ios TFM).
+        Pin THIS reference to Discovery's net10.0-android inner build via the documented SetTargetFramework
+        mechanism (not AdditionalProperties=TargetFrameworks=..., which overrides the plural outer-build
+        property but is not honored by NuGet's restore graph walk, leaving project.assets.json without a
+        net10.0-android target — NETSDK1005 at build time even though the build itself looked fine).
+        SetTargetFramework passes a single TargetFramework global property straight to Discovery's inner
+        build for this reference, bypassing outer-build TFM selection entirely, so it does not depend on
+        (and does not need) Discovery's CastrMobileTargets switch or its net10.0-ios TFM at all — safe on a
+        Linux runner with no ios workload installed. Castr.Gui keeps its plain net10.0 reference to the same
+        project, unaffected.
       -->
-      <AdditionalProperties>TargetFrameworks=net10.0-android</AdditionalProperties>
+      <SetTargetFramework>TargetFramework=net10.0-android</SetTargetFramework>
     </ProjectReference>
   </ItemGroup>
 
