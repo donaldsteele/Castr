@@ -1146,3 +1146,57 @@ an environmental cap is exactly the kind of thing this log exists to stop us fro
 **The inline bubble is still worth tracking — as a future constraint, not a current cause.** It is roughly
 300–500 µs per chunk, about a 4% duty cycle at today's rates, and it becomes binding as per-datagram cost
 falls. Not a contributor to this cap, and not something to "fix" on the strength of this measurement.
+
+---
+
+## 2026-07-26 — First post-reboot wire measurement: the router cap confirmed, and Castr is near it
+
+The reboot cleared the leaked loopback multicast memberships (verified: `netsh interface ipv4 show joins`
+now shows only `239.255.255.250`/SSDP). So `239.192.55.55` finally egresses via the physical NIC, and
+this is the **first measurement of Castr over a real wire on this host**.
+
+100 MiB, group `239.192.55.55`, warm, **interleaved**, `--interface` forced explicitly on both ends,
+post-M9 `ff490e9`, every run verified complete:
+
+| Path | Runs | Goodput |
+|---|---|---|
+| Loopback Pseudo-Interface 1 | 3.65 s, 3.88 s | **26–27 MB/s** |
+| **Ethernet (real wire)** | 9.77 s, 9.81 s | **10.2 MB/s** |
+
+### This confirms the prediction, and the tightness is the tell
+
+Ethernet variance is **10.19–10.23 MB/s** — 0.4%. Congestion fluctuates; a fixed meter does not. That
+is the same signature the root-cause investigation found (0.2% variance over 20 s).
+
+Reconciling against the diagnosed **~11.8 MB/s wire byte-rate cap**: at M9's measured 1.031× wire
+amplification and ~95% payload efficiency, 10.2 MB/s of goodput is `10.2 × 1.031 / 0.95` ≈ **11.1 MB/s
+on the wire — about 94% of the cap.** Prediction and measurement agree within ~6%.
+
+### The consequence, stated plainly
+
+**Castr is now within ~6% of saturating this LAN's available multicast bandwidth.** Remaining transport
+optimisation on this hardware is competing for that last ~6%, not for the 10× that the loopback numbers
+appear to offer. The loopback/wire ratio is **2.6×**, which is exactly the "loopback numbers exceed the
+real ceiling" problem written up in the previous section.
+
+**A different switch or a direct host-to-host cable is therefore the gating item for the entire
+wire-speed programme** — not more code. Until that exists, any further transport work should be
+justified on correctness, scaling (fan-out), or CPU cost, *not* on single-receiver throughput on this
+segment.
+
+### Methodology note — a harness bug that produced a plausible wrong answer
+
+The first two attempts at this A/B reported the loopback arm completing in **0.00 s at ~3,000,000 MB/s**.
+That was a **quoting bug in the measurement harness, not a finding**: PowerShell's
+`Start-Process -ArgumentList` does not quote array elements containing spaces, so
+`--interface "Loopback Pseudo-Interface 1"` was split into three arguments and the receiver exited on
+an argument-parse error before doing anything. The Ethernet arm was unaffected because `Ethernet` has
+no spaces — so **one arm of the A/B was silently broken while the other returned valid data.**
+
+It was initially mis-attributed to a VPN adapter that happened to be up at the time. The actual
+diagnosis came from capturing the process's stdout/stderr rather than reasoning about the number.
+
+Two rules reinforced: **a throughput figure that is physically impossible is a harness bug until
+proven otherwise**, and **always assert transfer completion, not just process exit** — adding a
+`Complete` column (file size == expected) is what made the failure visible, since the broken arm exited
+with success-shaped timing.
