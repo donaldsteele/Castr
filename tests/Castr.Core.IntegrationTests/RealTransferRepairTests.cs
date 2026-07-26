@@ -23,7 +23,7 @@ public class RealTransferRepairTests
     public async Task Transfer_OverRealSocketsWithInducedLoss_CompletesViaRepair()
     {
         var group = IPAddress.Parse("239.192.55.63");
-        const int port = 45004;
+        int port = TestPorts.FreeUdp();
 
         var originalBytes = new byte[40_000];
         new Random(11).NextBytes(originalBytes);

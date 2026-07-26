@@ -249,24 +249,212 @@ public class ChunkPacketizerTests
     public void Offer_PeerRelayingOnAMuchSmallerDatagramBudget_IsStillAccepted()
     {
         // Guards the other direction: the packet-count bound must not be so tight that it breaks a peer relaying
-        // a chunk it sliced on a smaller datagram budget. 600 bytes is half the shipped budget and yields ~760
-        // packets for a 256 KiB chunk, against a bound of ~1,749 derived from the 1200-byte budget — i.e. the
-        // deliberate 8x tolerance in MinFragmentBytesFor is doing real work, not just sitting there.
+        // a chunk it sliced on a smaller datagram budget. 600 bytes is well under half the shipped budget and
+        // yields ~472 packets for a 256 KiB chunk (it was ~756 before the M9 slicing fix stopped reserving proof
+        // space on every packet), against a bound of ~1,426 derived from the shipped budget — i.e. the deliberate
+        // 8x tolerance in MinFragmentBytesFor is doing real work, not just sitting there.
         var ciphertext = Bytes(262_160, seed: 7);
         var proof = ProofFor(512, 0);
         var packets = ChunkPacketizer.Split(Session, 0, 0, ciphertext, proof, maxDatagramPayload: 600);
 
         var assembler = new ChunkPacketAssembler(
             ChunkPacketAssembler.CiphertextBoundForChunkSize(262_144),
-            minFragmentBytes: ChunkPacketAssembler.MinFragmentBytesFor(1200));
+            minFragmentBytes: ChunkPacketAssembler.MinFragmentBytesFor(WirePacketizer.DefaultMaxDatagramPayload));
 
-        Assert.True(packets.Count > 700, $"fixture must produce a many-packet split, got {packets.Count}");
+        Assert.True(packets.Count > 400, $"fixture must produce a many-packet split, got {packets.Count}");
         (byte[] Ciphertext, MerkleProof Proof)? completed = null;
         foreach (var packet in packets)
             completed ??= assembler.Offer(packet);
 
         Assert.NotNull(completed);
         Assert.Equal(ciphertext, completed!.Value.Ciphertext);
+    }
+
+    // ---- M9: proof space is reserved on packet 0 only ----
+
+    /// <summary>
+    /// ChunkPacketizer.FixedEnvelopeOverhead, restated here because it is internal to Castr.Core:
+    /// version(1)+type(1)+sessionId(16)+fileIndex(4)+chunkIndex(4)+packetIndex(4)+packetCount(4)
+    /// +ciphertextLength(4)+fragment length prefix(4)+proof-present flag(1) = <b>43</b>. (Its own comment in
+    /// Castr.Core said 47 until M9; the expression always summed to 43, and the encoded sizes asserted below are
+    /// what settle it.)
+    /// </summary>
+    private const int EnvelopeOverhead = 43;
+
+    private static int ProofBytes(MerkleProof proof) => 4 + 4 + 2 + (proof.Steps.Length * (ChunkHash.Size + 1));
+
+    [Theory]
+    [InlineData(1200)]
+    [InlineData(WirePacketizer.DefaultMaxDatagramPayload)]
+    public void Split_ReservesProofSpaceOnPacketZeroOnly(int budget)
+    {
+        // The defect this locks down: every packet used to be sized against packet 0's proof-carrying envelope,
+        // so every packet after the first wasted ProofEncodedSize(proof) bytes of its datagram. Packet 0 is short
+        // BECAUSE it carries the proof; every later packet is full.
+        var ciphertext = Bytes(262_160, seed: 11);
+        var proof = ProofFor(400, 7);                       // 100 MiB at 256 KiB chunks => depth 9 => 307-byte proof
+        Assert.Equal(307, ProofBytes(proof));                // the fixture is the shipped configuration, not a guess
+
+        var packets = ChunkPacketizer.Split(Session, 0, 7, ciphertext, proof, budget);
+
+        Assert.Equal(budget - EnvelopeOverhead - ProofBytes(proof), packets[0].Fragment.Length);
+        Assert.Equal(budget, MessageCodec.Encode(packets[0]).Length);   // packet 0 is exactly full, proof included
+        foreach (var packet in packets.Skip(1).SkipLast(1))
+        {
+            Assert.Equal(budget - EnvelopeOverhead, packet.Fragment.Length);
+            Assert.Equal(budget, MessageCodec.Encode(packet).Length);   // no proof reservation => exactly full
+        }
+        Assert.All(packets, p => Assert.True(MessageCodec.Encode(p).Length <= budget, "packet exceeds datagram budget"));
+        Assert.Equal(ciphertext.Length, packets.Sum(p => p.Fragment.Length));
+    }
+
+    [Theory]
+    // The predictions this stage was commissioned against, derived from the code and asserted here so a future
+    // change to either the envelope or the budget has to restate them:
+    //   packet 0 = budget − 43 − 307, later = budget − 43, count = 1 + ceil((262160 − first) / later).
+    [InlineData(1200, 227)]                                          // old slicing at this budget: 309
+    [InlineData(WirePacketizer.DefaultMaxDatagramPayload, 184)]      // shipped: 309 -> 184, a 1.68x reduction
+    public void Split_ShippedConfiguration_ProducesThePredictedPacketCount(int budget, int expected)
+    {
+        var packets = ChunkPacketizer.Split(Session, 0, 0, Bytes(262_160, seed: 12), ProofFor(400, 0), budget);
+
+        Assert.Equal(expected, packets.Count);
+    }
+
+    [Fact]
+    public void Split_EmptyCiphertext_StillProducesExactlyOneProofCarryingPacket()
+    {
+        var packets = ChunkPacketizer.Split(Session, 0, 0, [], ProofFor(64, 0), WirePacketizer.DefaultMaxDatagramPayload);
+
+        Assert.Single(packets);
+        Assert.Empty(packets[0].Fragment);
+        Assert.NotNull(packets[0].Proof);
+    }
+
+    [Fact]
+    public void Reassembly_AcceptsAnOldStyleUniformlySlicedChunk_Unchanged()
+    {
+        // The claim that makes this change wire-compatible, tested rather than asserted: ChunkPacketAssembler
+        // sums each fragment's ACTUAL length against CiphertextLength and never assumed uniform fragments, so a
+        // chunk sliced the OLD way (every packet sized against packet 0's proof envelope) still reassembles
+        // byte-exactly on a receiver running the new code.
+        var ciphertext = Bytes(262_160, seed: 13);
+        var proof = ProofFor(400, 3);
+        var oldStyle = SplitTheOldUniformWay(ciphertext, proof, maxDatagramPayload: 1200); // the pre-M9 shipped pair
+
+        Assert.Equal(309, oldStyle.Count);   // 850-byte fragments: the exact shape the M8 sniffer table counted
+        var assembler = new ChunkPacketAssembler(ChunkPacketAssembler.CiphertextBoundForChunkSize(262_144));
+        (byte[] Ciphertext, MerkleProof Proof)? completed = null;
+        foreach (var packet in oldStyle)
+            completed ??= assembler.Offer(packet);
+
+        Assert.NotNull(completed);
+        Assert.Equal(ciphertext, completed!.Value.Ciphertext);
+        Assert.Equal(proof, completed.Value.Proof);
+    }
+
+    [Fact]
+    public void Reassembly_MismatchedSlicingArrivingFirst_DoesNotStrandTheChunk()
+    {
+        // The failure QA measured, and the reason Offer now drops the STALE partial instead of the incoming
+        // packet. Order matters and the benign order hides it: if a peer on a different slicing gets a partial
+        // in first, it used to pin the buffer at its own PacketCount, and every packet of every other slicing was
+        // dropped from then on. Forget() only runs after a *successful* assembly, so nothing released that buffer
+        // short of LRU eviction — which needs _maxPendingChunks other chunks to go pending, and a lossless
+        // transfer keeps 1-2 open. A full, correct re-delivery could not complete the chunk: it was stranded.
+        //
+        // Verified to fail before the fix (reassembled=False even after a complete new-sliced delivery).
+        var ciphertext = Bytes(262_160, seed: 15);
+        var proof = ProofFor(400, 9);
+
+        var newStyle = ChunkPacketizer.Split(Session, 0, 9, ciphertext, proof, WirePacketizer.DefaultMaxDatagramPayload);
+        var oldStyle = SplitTheOldUniformWay(ciphertext, proof, maxDatagramPayload: 1200, chunkIndex: 9);
+        Assert.NotEqual(newStyle.Count, oldStyle.Count);
+
+        var assembler = new ChunkPacketAssembler(ChunkPacketAssembler.CiphertextBoundForChunkSize(262_144));
+
+        // A mismatched peer's PARTIAL relay lands first and establishes the buffer.
+        foreach (var packet in oldStyle.Take(30))
+            Assert.Null(assembler.Offer(packet));
+        Assert.Equal(1, assembler.PendingChunkCount);
+
+        // Then the chunk is delivered in full at this session's own slicing. It must complete.
+        (byte[] Ciphertext, MerkleProof Proof)? completed = null;
+        foreach (var packet in newStyle)
+            completed ??= assembler.Offer(packet);
+
+        Assert.NotNull(completed);
+        Assert.Equal(ciphertext, completed!.Value.Ciphertext); // byte-exact, and no eviction pressure was needed
+        Assert.Equal(proof, completed.Value.Proof);
+        Assert.Equal(0, assembler.PendingChunkCount);
+    }
+
+    [Fact]
+    public void Reassembly_TwoMismatchedSourcesInterleaved_NeverCorrupt_AndConvergeOnACleanPass()
+    {
+        // The full contract for mismatched slicings, stated as the two things that are actually true:
+        //   1. fragments from different slicings are NEVER spliced together — nothing wrong can be produced;
+        //   2. the cost of a mismatch is progress, not correctness — two sources transmitting the same chunk
+        //      simultaneously reset each other's buffer, and the chunk completes as soon as either one gets a
+        //      clean pass, which is exactly what chunk-level repair re-requests.
+        // The previous version of this test asserted the stronger "completes from the source that agrees" while
+        // only ever exercising the benign arrival order; the peer-first test above is what covers the case that
+        // claim actually got wrong.
+        var ciphertext = Bytes(262_160, seed: 14);
+        var proof = ProofFor(400, 5);
+
+        var newStyle = ChunkPacketizer.Split(Session, 0, 5, ciphertext, proof, WirePacketizer.DefaultMaxDatagramPayload);
+        var oldStyle = SplitTheOldUniformWay(ciphertext, proof, maxDatagramPayload: 1200, chunkIndex: 5);
+        Assert.NotEqual(newStyle.Count, oldStyle.Count); // the disagreement the assembler acts on
+
+        var assembler = new ChunkPacketAssembler(ChunkPacketAssembler.CiphertextBoundForChunkSize(262_144));
+
+        // Both sources transmit the chunk at once, alternating on the wire.
+        for (int i = 0; i < newStyle.Count; i++)
+        {
+            if (i < oldStyle.Count)
+                AssertNeverWrong(assembler.Offer(oldStyle[i]));
+            AssertNeverWrong(assembler.Offer(newStyle[i]));
+        }
+
+        // Then one source gets a clean pass — the ordinary repair re-send — and the chunk completes byte-exactly.
+        (byte[] Ciphertext, MerkleProof Proof)? completed = null;
+        foreach (var packet in newStyle)
+            completed ??= assembler.Offer(packet);
+
+        Assert.NotNull(completed);
+        Assert.Equal(ciphertext, completed!.Value.Ciphertext);
+        Assert.Equal(proof, completed.Value.Proof);
+        Assert.Equal(0, assembler.PendingChunkCount);
+
+        // Whatever the interleaving produced, it can only ever have been the real chunk — never a splice.
+        void AssertNeverWrong((byte[] Ciphertext, MerkleProof Proof)? result)
+        {
+            if (result is not null)
+                Assert.Equal(ciphertext, result.Value.Ciphertext);
+        }
+    }
+
+    /// <summary>
+    /// Reproduces the pre-M9 slicing exactly — every fragment sized against packet 0's proof-carrying envelope —
+    /// so the tests above can model a peer (or an older build) that still slices that way.
+    /// </summary>
+    private static IReadOnlyList<ChunkPacketMessage> SplitTheOldUniformWay(
+        byte[] ciphertext, MerkleProof proof, int maxDatagramPayload, int chunkIndex = 0)
+    {
+        int perPacket = maxDatagramPayload - EnvelopeOverhead - ProofBytes(proof);
+        int count = ciphertext.Length == 0 ? 1 : ((ciphertext.Length + perPacket - 1) / perPacket);
+
+        var packets = new ChunkPacketMessage[count];
+        for (int i = 0; i < count; i++)
+        {
+            int offset = i * perPacket;
+            int length = Math.Min(perPacket, ciphertext.Length - offset);
+            packets[i] = new ChunkPacketMessage(
+                Session, 0, chunkIndex, i, count, ciphertext.Length,
+                ciphertext.AsSpan(offset, length).ToArray(), i == 0 ? proof : null);
+        }
+        return packets;
     }
 
     private static byte[] Bytes(int length, int seed)

@@ -28,7 +28,7 @@ public class LargeChunkTransferTests
         // 3 chunks of 256 KB each => hundreds of MTU-safe wire packets, every one far past the old
         // single-datagram ceiling this fix removes.
         var group = IPAddress.Parse("239.192.55.64");
-        const int port = 45005;
+        int port = TestPorts.FreeUdp();
         const int chunkSize = 262_144; // 256 KiB, the documented default
         var originalBytes = new byte[chunkSize * 2 + 50_000];
         new Random(23).NextBytes(originalBytes);
@@ -43,7 +43,7 @@ public class LargeChunkTransferTests
         // this exercises the design's core claim — a chunk missing any packet stays incomplete and the
         // existing whole-chunk repair recovers it, with no packet-level NACK machinery.
         var group = IPAddress.Parse("239.192.55.65");
-        const int port = 45006;
+        int port = TestPorts.FreeUdp();
         const int chunkSize = 262_144;
         var originalBytes = new byte[chunkSize + 20_000];
         new Random(29).NextBytes(originalBytes);

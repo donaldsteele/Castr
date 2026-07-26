@@ -11,7 +11,7 @@ public class RealMulticastFanOutTests
     public async Task OneSend_MultipleRealSockets_AllReceiveIt()
     {
         var group = IPAddress.Parse("239.192.55.61");
-        const int port = 45002;
+        int port = TestPorts.FreeUdp();
         const int receiverCount = 5;
 
         await using IMulticastTransport sender = new UdpMulticastTransport(group, port);
@@ -40,7 +40,7 @@ public class RealMulticastFanOutTests
     public async Task MultipleSequentialSends_ArriveInOrder_OnRealLoopback()
     {
         var group = IPAddress.Parse("239.192.55.62");
-        const int port = 45003;
+        int port = TestPorts.FreeUdp();
 
         await using IMulticastTransport sender = new UdpMulticastTransport(group, port);
         await using IMulticastTransport receiver = new UdpMulticastTransport(group, port);

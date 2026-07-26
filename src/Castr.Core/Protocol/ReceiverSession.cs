@@ -217,6 +217,13 @@ public sealed class ReceiverSession
         ITrustPrompt? trustPrompt = null,
         int maxDatagramPayloadBytes = WirePacketizer.DefaultMaxDatagramPayload)
     {
+        // Range-checked and captured once, here, for the life of the session: the budget determines how this
+        // session slices chunks when it relays a repair response, and ChunkPacketAssembler.Offer rejects packets
+        // whose slicing metadata disagrees with the first one seen for a chunk. See
+        // WirePacketizer.ValidateMaxDatagramPayload for why it must never change mid-session.
+        maxDatagramPayloadBytes = WirePacketizer.ValidateMaxDatagramPayload(
+            maxDatagramPayloadBytes, nameof(maxDatagramPayloadBytes));
+
         _receiverId = receiverId;
         _trustStore = trustStore;
         _transport = transport;

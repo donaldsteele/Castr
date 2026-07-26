@@ -792,15 +792,18 @@ public class ReceiverSessionGossipAndRepairTests
     [Fact]
     public async Task BulkRepair_SplitsIntoSingleDatagramRequests_AndStillRecoversEveryChunk()
     {
-        // End-to-end guard on the P0 cap. 280 contiguous chunks (more than the ~268 cap) are lost on their only
-        // carousel delivery, so the receiver must ask for all of them at once. Before the cap that was one
-        // ~1.1 KB-per-268-indices message concatenated into a single oversized request, fragmented
-        // all-or-nothing; now it must arrive as several single-datagram requests, and every chunk must still be
-        // recovered.
+        // End-to-end guard on the P0 cap. A contiguous run longer than the per-request cap is lost on its only
+        // carousel delivery, so the receiver must ask for all of it at once. Before the cap that was one
+        // oversized request, fragmented all-or-nothing; now it must arrive as several single-datagram requests,
+        // and every chunk must still be recovered.
+        //
+        // The run length is derived from the cap rather than hardcoded: the cap is a function of the datagram
+        // budget (336 at the shipped 1472, 268 at the old 1200), so a literal silently stops exceeding it when
+        // the budget changes — which is exactly what happened when M9 raised the budget.
         const int chunkSize = 200;
-        var originalBytes = RandomBytes(seed: 73, length: 60_000); // 300 chunks
+        var originalBytes = RandomBytes(seed: 73, length: 100_000); // 500 chunks
         int chunkCount = ChunkLayout.ComputeChunkCount(originalBytes.Length, chunkSize);
-        const int lostRunLength = 280;
+        int lostRunLength = RepairOptions.DefaultMaxChunksPerRequest + 12;
         Assert.True(lostRunLength > RepairOptions.DefaultMaxChunksPerRequest, "fixture must exceed the cap");
         Assert.True(chunkCount > lostRunLength);
 
@@ -839,7 +842,7 @@ public class ReceiverSessionGossipAndRepairTests
             Assert.True(r.ChunkIndices.Length <= RepairOptions.DefaultMaxChunksPerRequest,
                 $"a CHUNK_REQUEST carried {r.ChunkIndices.Length} indices, over the {RepairOptions.DefaultMaxChunksPerRequest} cap"));
 
-        // Nothing this receiver sent needed fragmenting at all. At 300 chunks its PEER_HAVE bitmap and its
+        // Nothing this receiver sent needed fragmenting at all. At 500 chunks its PEER_HAVE bitmap and its
         // JOIN_REQUEST both fit one datagram, so any outbound PacketFragment could only have come from an
         // oversized CHUNK_REQUEST — which is exactly the failure mode the cap removes.
         Assert.DoesNotContain(recorded.Datagrams, d => d.Length >= 2 && d[1] == (byte)MessageType.PacketFragment);

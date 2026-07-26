@@ -30,7 +30,7 @@ public class EndToEndLoopbackTests : IDisposable
     public async Task Send_ThenReceive_TransfersByteIdenticalFile()
     {
         var group = IPAddress.Parse("239.192.55.211");
-        const int port = 45211;
+        int port = TestPorts.FreeUdp();
 
         var payload = RandomNumberGenerator.GetBytes(40_000);
         var srcPath = Path.Combine(_dir, "payload.bin");
@@ -74,7 +74,7 @@ public class EndToEndLoopbackTests : IDisposable
     public async Task Receive_FromUntrustedSenderUnderDeny_ReturnsTrustDenied()
     {
         var group = IPAddress.Parse("239.192.55.212");
-        const int port = 45212;
+        int port = TestPorts.FreeUdp();
 
         var payload = RandomNumberGenerator.GetBytes(8_000);
         var srcPath = Path.Combine(_dir, "payload.bin");

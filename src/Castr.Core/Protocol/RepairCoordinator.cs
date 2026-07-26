@@ -86,8 +86,8 @@ public sealed record RepairOptions(
 
     /// <summary>
     /// Largest index count that keeps a <see cref="ChunkRequestMessage"/> inside
-    /// <see cref="WirePacketizer.DefaultMaxDatagramPayload"/> — 268 at the shipped 1200-byte budget, against a
-    /// measured true single-datagram maximum of 284.
+    /// <see cref="WirePacketizer.DefaultMaxDatagramPayload"/> — <b>336</b> at the shipped 1472-byte budget (it was
+    /// 268 at the 1200-byte budget, against a measured true single-datagram maximum of 284 there).
     ///
     /// <para><b>Re-validated at the 256 KiB default and deliberately unchanged.</b> Every term in this derivation
     /// — the datagram budget and <see cref="MessageCodec"/>'s ChunkRequest encoding — is independent of chunk
@@ -96,9 +96,17 @@ public sealed record RepairOptions(
     /// the fact that 268 indices now covers most of a small file is not a defect: covering the file is what a
     /// receiver that genuinely lost the file should ask for, and the watermark decides whether it may.</para>
     ///
+    /// <para><b>M9 raised this by a further 1.25x as a derived consequence, not a decision.</b> The datagram
+    /// budget went 1200 → 1472 (see <see cref="WirePacketizer.DefaultMaxDatagramPayload"/>), and this constant is
+    /// a function of that budget by construction — more indices genuinely do fit in one datagram now, so pinning
+    /// it to the old budget would have made it state something false. The disclosure that matters is the one
+    /// below: the data a single request datagram can command moves <b>67 MB → 84 MB</b>. That is the same
+    /// count-vs-byte denomination gap already tracked, made 25% worse, not a new class of exposure.</para>
+    ///
     /// <para><b>One consequence that did change by 32x, recorded because it is not obvious.</b> The cap is
     /// denominated in indices, so the <i>data</i> one request datagram can command grew with the chunk size:
-    /// 268 x 256 KiB = <b>67 MB</b> served from a single inbound datagram, where at 8 KiB it was 2.2 MB. Castr's
+    /// 336 x 256 KiB = <b>84 MB</b> served from a single inbound datagram, where at 8 KiB and a 1200-byte budget
+    /// it was 2.2 MB. Castr's
     /// own receivers are bounded by <see cref="DefaultMaxRequestsPerPass"/>, but a hostile on-segment peer is not
     /// — it can simply emit request datagrams. The principled fix is a byte-denominated serve cap on the sender
     /// rather than an index-denominated one; it is not made here because that changes sender behavior under load
@@ -112,16 +120,16 @@ public sealed record RepairOptions(
     ///
     /// <para>Derivation, so this is not a bare number: repair capacity is
     /// <c>MaxRequestsPerPass x MaxChunksPerRequest x passes/second</c>. At the shipped values and the CLI's 250 ms
-    /// repair period that is <c>4 x 268 x 4 = 4,288 chunks/s</c>. <b>At the M8 default chunk size of 256 KiB that
-    /// is ~1.1 GB/s of nominal repair traffic</b> against a wire that real two-process measurement clocks at
+    /// repair period that is <c>4 x 336 x 4 = 5,376 chunks/s</c>. <b>At the M8 default chunk size of 256 KiB that
+    /// is ~1.4 GB/s of nominal repair traffic</b> against a wire that real two-process measurement clocks at
     /// 12-17 MB/s (see <c>docs/benchmarks/throughput-runs.md</c>) — so the cap is loose by roughly <i>two</i>
     /// orders of magnitude, where at the old 8 KiB default it was loose by one.</para>
     ///
     /// <para><b>⚠️ Be explicit about this: at 256 KiB one of M7's own invariants has regressed.</b> This cap was
     /// added in M7 round 2 precisely so that amplification had a bound that <i>did not depend on the carousel
     /// watermark being right</i> — before it, any false-idle in the valve restored the full repair storm,
-    /// self-reinforcingly. That guarantee no longer holds for ordinary files: <c>4 x 268 = 1,072</c> chunks per
-    /// pass exceeds the entire chunk count of any file below <b>268 MB</b> at 256 KiB, so for such a file the cap
+    /// self-reinforcingly. That guarantee no longer holds for ordinary files: <c>4 x 336 = 1,344</c> chunks per
+    /// pass exceeds the entire chunk count of any file below <b>336 MB</b> at 256 KiB, so for such a file the cap
     /// cannot bind at all and <b>the watermark is once again the only thing standing between the system and a
     /// full-file repair storm.</b> The trade is reduced probability, increased consequence: the measured
     /// watermark margin is 36x with zero false-idle events in 16 instrumented runs (see

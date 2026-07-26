@@ -64,8 +64,11 @@ had already taken and misattributed (see "what we got wrong," below).
 nothing to remove. Worth checking first precisely because it would have been the cheapest
 possible explanation.
 
-**Traffic silently routing over a real NIC instead of loopback.** Ruled out empirically by
-forcing `--interface "Loopback Pseudo-Interface 1"` on both ends. No meaningful change.
+~~**Traffic silently routing over a real NIC instead of loopback.** Ruled out empirically by
+forcing `--interface "Loopback Pseudo-Interface 1"` on both ends. No meaningful change.~~
+**❌ WITHDRAWN 2026-07-25.** The test forced loopback on a group that *already* resolved to loopback, so it
+could not have shown a difference. The path a group takes is the confounder, not a ruled-out hypothesis —
+see the root-cause section at the end of [`benchmarks/throughput-runs.md`](benchmarks/throughput-runs.md).
 
 ### Approach A — Pipeline the sender's send loop *(shipped, then reverted to a no-op)*
 
@@ -304,17 +307,28 @@ three review rounds. Prefer the hand-fed injected-clock form for anything assert
 group address is worth up to 1.8× on this host.** Identical binaries, identical payload, identical chunk
 size — only the group differs, and `239.192.55.55` finishes a 100 MB transfer in 5.6 s while
 `239.192.57.64` reproducibly takes 10.2 s. It is stable per address (not warm-up: `.64` stayed slow across
-five consecutive runs), it is not foreign traffic (a read-only sniffer parked on each idle group saw zero
-datagrams), and it is not interface selection (auto vs forced loopback is a dead heat, which incidentally
-re-confirms the retraction above). The slow class is a wire *byte-rate* ceiling of ~11.2 MB/s, and that is
+five consecutive runs) and it is not foreign traffic (a read-only sniffer parked on each idle group saw zero
+datagrams). ~~and it is not interface selection (auto vs forced loopback is a dead heat, which incidentally
+re-confirms the retraction above)~~ — **❌ withdrawn 2026-07-25: it *is* interface selection, and that
+"dead heat" forced loopback on a group that already resolved to loopback, so it was structurally incapable
+of showing a difference.** `netsh interface ipv4 show joins` shows leaked, `References = 0` loopback
+memberships for exactly the "fast" groups; joining a capped group on loopback flips it **11.90 → 329 MB/s**
+while a control group is unchanged. The two classes were **two different network paths**, not two behaviours
+of one. **Castr's shipped default group is one of the leaked ones, so every benchmark in this repo taken on
+the default group is a loopback number** — ratios between arms survive, absolute MB/s figures do not describe
+a LAN. The slow class is a wire *byte-rate* ceiling of ~11.2 MB/s, and that is
 what makes it poison rather than merely noisy: chunk size mostly buys datagram-count and gossip reduction,
 so under a byte-rate cap none of that can show up, and the M8 chunk-size A/B reads **1.12× on a capped
 group and 1.33× on an uncapped one**. Both run sets were warm, interleaved, n≥3, with tight variance —
 i.e. **internal validity again proved nothing about the environment**, which is the same lesson the M7
 entry above records, arriving through a different door. The practical rule added: **record the multicast
 group with every run**, and treat an unexplained absolute-throughput gap as an environment question before
-an implementation question. Root cause is not established, and chasing it was deliberately abandoned once
-the shipped default group was confirmed to be in the fast class.
+an implementation question. ~~Root cause is not established, and chasing it was deliberately abandoned once
+the shipped default group was confirmed to be in the fast class.~~ **Root cause established 2026-07-25
+(above): leaked loopback memberships. Abandoning the chase is the part that aged worst — the unexplained
+gap was the environment telling us our fastest configuration was not on the network at all.** The rule is
+now stronger: **record the interface a group actually resolves to, not just the group**, because the group
+is only a proxy for the path and the mapping is host state that changes without notice.
 
 **We reached for a mechanism story to explain a number we should have distrusted.** Alongside the
 withdrawn claim, the same report argued the fix "preserved" the repair stream's incidental
