@@ -45,6 +45,22 @@ Root cause of the ceiling (fully diagnosed, see `docs/benchmarks/throughput-runs
 
 Current: **~24 MB/s on loopback** at 100 MiB. All absolutes in the run log are loopback-only — labelled as such.
 
+### ✅ DECIDED 2026-07-26 — the throughput programme is CLOSED, and this is the agreed order of work after it
+
+**Throughput is done, not abandoned.** M6 → M9 took Castr from ~1.6 MB/s to **10.2 MB/s over real Ethernet, which is ~94% of this LAN's hard multicast ceiling** (~11.8 MB/s, imposed by the link partner metering multicast to 100 Mbps — fully diagnosed, see `docs/benchmarks/throughput-runs.md`). Prediction and measurement agree within 6%.
+
+Remaining single-receiver transport work competes for that last ~6% and **cannot be validated on this hardware**, because loopback runs at 2.6× the real ceiling — so any loopback A/B measures a regime that does not exist on the wire. That is the 60,000-byte-datagram mistake with the sign flipped, and this project has paid for it once already. **Do not resume transport optimisation without a different switch or a direct host-to-host cable.**
+
+**Agreed sequence for the next working session, in this order:**
+
+1. **Clear the small backlog.** ~8 genuinely small, unblocked items, mostly one-to-three files each: `SwarmPullSession._chunkCache` (the identical unbounded-cache defect M10 fixed in the multicast tier — now the **only remaining instance in the tree**), offset-keyed fragment reassembly (retires the mixed-budget stranding class from M9 and folds in the tracked M8 assembler rewrite), `SwarmServeListener` connection-task pruning, session-ID uniqueness enforcement in `Castr.Core`, the FIFO-vs-LRU naming correction in `PacketReassembler`/`ChunkPacketAssembler`, and the E2E `tc netem` packet-0 loss concentration. Low risk, no new design decisions, and it leaves the tree clean before anything structural. Closes roughly 8 of the open items below.
+
+2. **Finish fan-out scaling.** This is the product's headline claim — *"one send, hundreds of receivers"* — and the least-validated axis in the codebase: 3 receivers measure **8.01 MB/s against 13.65 at one**, with **5.08× wire amplification** in the worst measured configuration. Includes the `CAROUSEL_STATUS` (tag 16) and `SECTION_REPORT` (tag 17) redesign — see [[proposal-section-based-repair]], **as amended by the architecture review**: use a *cumulative monotone heartbeat, not an edge event*, because an edge event re-creates the "never reached vs. finished" conflation that produced both M7 liveness bugs. Expect 3-5 review rounds; this touches the most defect-dense area in the system.
+
+3. **Set up release automation.** Tag-triggered `release.yml`, self-contained per-RID publishes, checksums plus detached signatures, generated release notes, README install instructions. This was **M5's original scope**, displaced by the showcase work, and is the only real blocker between Castr and being something a person can download and run. `ci.yml`'s existing `package` job already produces the per-platform zips, so this is mostly wiring and signing.
+
+**Why this order** (it is deliberately not the highest-value-first order): the backlog is cheap and makes the tree clean before a structural change lands in the same files; fan-out is the largest genuine engineering item and wants a clean base; release automation is last because there is no point shipping a v1 before the fan-out claim it advertises is validated.
+
 ### Next steps, ranked (from a systems-architect + network-engineer design pass)
 
 0. **Get a dumb gigabit switch or direct cable.** Gating item for everything below that claims a real-network number.
