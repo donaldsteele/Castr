@@ -11,6 +11,64 @@ updated: 2026-07-25
 
 **Read this page first when resuming work on Castr after a session restart.** This is the durable, cross-session task list — in-session `TodoWrite` state does not persist, this page does. Update it at the close of every milestone (and whenever milestone status changes) before ending a session or compacting context, per [[castr-project]]'s stated resumability requirement.
 
+---
+
+## 🔻 RESUME HERE — state as of 2026-07-25, written before a planned reboot
+
+### ⚠️ READ THIS BEFORE RUNNING ANY BENCHMARK — the reboot changed the measurement environment
+
+This host had **leaked multicast memberships on Loopback Pseudo-Interface 1** (`References = 0`, no owning socket) for `239.192.55.55` — **Castr's shipped default group** — plus `239.192.57.63` and `239.192.57.64`. While those existed, traffic on the default group **never touched the wire**; it went to loopback.
+
+**Those leaks clear on reboot.** So the next benchmark on the default group will egress via the physical NIC and hit this LAN's hard **~11.8 MB/s multicast ceiling** instead of the ~24 MB/s loopback figures in the run log.
+
+**That will look like a catastrophic regression. It is not.** It is the same code measured over a different network path. Verify with `netsh interface ipv4 show joins` before concluding anything, and check which interface the group resolves to.
+
+Root cause of the ceiling (fully diagnosed, see `docs/benchmarks/throughput-runs.md`): the **link partner** — an eero-class mesh router at `192.168.68.1` — meters multicast to exactly 100 Mbps. Not the NIC, not Windows, not Castr. Evidence: per-frame time linear at 12.4 bytes/µs with **zero fixed intercept**, matches the preamble+IFG-inclusive wire model to 0.07%, broadcast on the same NIC runs 85–90 MB/s, and no stall exceeds 33.6 ms (the max 802.3x PAUSE quantum at 1 Gbps). Unicast on the same NIC hits full line rate (~119 MB/s).
+
+**Implication: further transport optimisation cannot be validated here.** Castr's loopback throughput already *exceeds* this LAN's real multicast ceiling. The prerequisite for any more wire-speed work is a **dumb gigabit switch or a direct cable between two hosts** — cheap, and it is the gating item, not more code.
+
+### Where the code is
+
+- `main` = `a413435`, pushed, in sync with `origin/main`. Working tree clean.
+- `bench/m7-instrumentation` = `4ab9891`, pushed. Holds `BenchMetrics` + `tools/bench-m7/` (inert unless `CASTR_BENCH=1`). **Based on pre-M7 `702de7c`** — rebase onto `main` before reusing it to measure current code.
+- One worktree survives at `.claude/worktrees/agent-aad9c2ea41236900d` (checked out to the bench branch). `.claude/` is gitignored. Safe to delete with `git worktree remove`.
+- **480 tests, 0 warnings** under `-warnaserror`. Docker netem E2E tier green.
+
+### Throughput programme so far
+
+| Milestone | Change | Measured |
+|---|---|---|
+| M6 | Receiver socket read decoupled into a bounded channel | fixed the 1.6–2.4 MB/s plateau |
+| M7 | Repair-storm bounding, PEER_HAVE coalescing, sender echo filter | amplification 2.39× → 1.13×, stalls eliminated; **goodput deliberately unresolved** |
+| M8 | Default chunk size 8 KB → 256 KB | 1.33×, and **2.80× under real netem loss** |
+| M9 | Merkle-proof space reserved on packet 0 only; datagram budget 1200 → 1472 | **1.41×**; 309 → 184 datagrams per chunk |
+
+Current: **~24 MB/s on loopback** at 100 MiB. All absolutes in the run log are loopback-only — labelled as such.
+
+### Next steps, ranked (from a systems-architect + network-engineer design pass)
+
+0. **Get a dumb gigabit switch or direct cable.** Gating item for everything below that claims a real-network number.
+1. **Measure the receiver's sustained datagram ceiling.** This number does not exist and several decisions depend on it. Component measurement, not a throughput claim.
+2. **Bound `_chunkCache`** — it is unbounded and retains every chunk's ciphertext, so a 60 s transfer at 115 MB/s would retain ~7 GB. This is a **hard wall**, not a rate limit. Cold path can re-read from the `.part` file and re-encrypt: `ContentKey.EncryptChunk` is fully deterministic, so the result is byte-identical.
+3. **Receiver per-datagram path**: O(1) `IsComplete` (currently O(ChunkCount) *per datagram*), scatter-into-buffer reassembly (also closes the tracked `new byte[PacketCount][]` pre-sizing item), pooled receive buffers, shardable reassemblers.
+4. **Paced sender** (`IPacedSender`: dual token bucket, priority queues, batched drain). **Must land before or with any send batching** — at window=1 the awaited send *is* the pacer, and removing that brake without it is the M6-round-1 failure, which measured −63% goodput and 48.8% receiver-side loss.
+5. **`CAROUSEL_STATUS` heartbeat** (new message type, tag 16 — additive and backward-safe). Replaces the `CarouselIdleThreshold` heuristic that caused both M7 liveness bugs.
+6. **`SECTION_REPORT`** (tag 17) — section-scoped bitmaps replacing `CHUNK_REQUEST` + `PEER_HAVE`, with suppression-by-overhearing and sender-side union coalescing. **This is the fix for fan-out**, where 3 receivers measured 5.08× amplification.
+7. Sender read-ahead pipeline; then rate feedback, last.
+
+See [[proposal-section-based-repair]] for 5–6, amended by the architecture review: use a **cumulative monotone heartbeat, not an edge event** — an edge event re-creates the "never reached vs. finished" conflation that produced both M7 liveness bugs.
+
+### Rules earned the hard way — apply these
+
+- **Changes that reduce datagrams-per-byte are safe to land before the receiver is fixed. Changes that increase datagrams-per-second are not.** Every throughput change that regressed (M6 round 1's send window, window=2, the 60,000-byte datagram experiment) was the second class. M9 was the first thing shipped from the first class.
+- **A format change is lockstep only if the receiver's *accept predicate* rejects the new output — go read that predicate**, not the encoder's output shape. Misreading this deferred M9 for two milestones at 1.41×.
+- **Record the multicast group with every benchmark run**, and verify which interface it resolves to. Two documented confounders have invalidated whole run sets: the OS page cache (~1.94×) and group-address/interface selection (~1.8×, now root-caused).
+- **`MessageCodec` and `ManifestCodec` have opposite extensibility rules.** New *message types* are additive (unknown tags throw and both sessions swallow). Appending a field to the *manifest* is not — `ManifestVerifier.VerifySignature` re-encodes the decoded manifest before verifying, so an old reader rejects the transfer outright.
+- **Give mutation/probe work its own worktree.** Two agents editing one worktree produced a stale-binary artifact and a broken build in this session.
+- **.NET exposes no datagram batching on Windows** — no `sendmmsg`, no `WSASendMsg`, no RIO; `SendPacketsAsync` destroys datagram boundaries (measured). Linux UDP GSO is reachable via a raw socket option and measured **35× better per datagram**. Near-wire-speed is a Linux-favoured target.
+
+---
+
 ## Milestone status
 
 | Milestone | Scope | Status |
