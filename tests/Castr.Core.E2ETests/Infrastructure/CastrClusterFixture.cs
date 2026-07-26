@@ -121,11 +121,40 @@ public sealed class CastrClusterFixture : IAsyncLifetime
             CreateNoWindow = true,
         }) ?? throw new InvalidOperationException("Failed to start 'dotnet publish'.");
 
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        // Drain both streams via events rather than ReadToEnd(), and wait on exit rather than on EOF.
+        //
+        // This used to be `ReadToEnd()` on stdout, then stderr, then WaitForExit — which DEADLOCKS whenever a
+        // persistent MSBuild node is alive. MSBuild defaults to nodeReuse:true, so any earlier `dotnet build` or
+        // `dotnet test` on the machine leaves long-lived node processes behind, and those nodes INHERIT the
+        // redirected pipe handles from this child. The pipe therefore never reaches EOF even after `dotnet
+        // publish` itself has exited and written its output, so ReadToEnd() blocks forever. The symptom — tens of
+        // minutes of a hung test run with zero Docker activity — is almost identical to the Testcontainers npipe
+        // hang documented above, which is what makes it expensive to diagnose. (Observed for real; a dotnet-stack
+        // dump showed the managed stack parked right here, not in any Docker client code.)
+        //
+        // Event-based draining plus WaitForExit(timeout) removes the dependency on EOF entirely: an inherited
+        // handle can hold the pipe open as long as it likes and this still returns when the publish exits.
+        var stdout = new System.Text.StringBuilder();
+        var stderr = new System.Text.StringBuilder();
+        process.OutputDataReceived += (_, e) => { if (e.Data is not null) lock (stdout) stdout.AppendLine(e.Data); };
+        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) lock (stderr) stderr.AppendLine(e.Data); };
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        var publishTimeout = TimeSpan.FromMinutes(15);
+        if (!process.WaitForExit((int)publishTimeout.TotalMilliseconds))
+        {
+            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+            throw new InvalidOperationException($"'dotnet publish' did not finish within {publishTimeout}.");
+        }
+
         if (process.ExitCode != 0)
-            throw new InvalidOperationException($"'dotnet publish' failed (exit {process.ExitCode}).\n{stdout}\n{stderr}");
+        {
+            string outText, errText;
+            lock (stdout) outText = stdout.ToString();
+            lock (stderr) errText = stderr.ToString();
+            throw new InvalidOperationException($"'dotnet publish' failed (exit {process.ExitCode}).\n{outText}\n{errText}");
+        }
 
         var binary = Path.Combine(outDir, "castr");
         if (!File.Exists(binary))

@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using NSec.Cryptography;
 using Castr.Core.Chunking;
 using Castr.Core.Manifest;
@@ -20,12 +21,49 @@ namespace Castr.Core.Protocol;
 /// eligible for repair. Null uses <see cref="ReceiverSession.DefaultCarouselIdleThreshold"/>. Injectable for the
 /// same reason, and so tests can exercise the valve without burning real wall-clock time.
 /// </param>
+/// <param name="ChunkCacheBytes">
+/// Ceiling on the total bytes of verified chunk <i>ciphertext</i> this receiver keeps in memory for relaying to
+/// peers during repair. Null uses <see cref="ReceiverSession.DefaultChunkCacheBytes"/>. Injectable mainly so
+/// tests can set it small enough to force eviction on a tiny transfer.
+/// </param>
 public sealed record ReceiverSessionOptions(
     string DestinationRoot,
     UnknownSenderPolicy UnknownSenderPolicy = UnknownSenderPolicy.Deny,
     bool IsInteractive = false,
     TimeSpan? PeerHaveInterval = null,
-    TimeSpan? CarouselIdleThreshold = null);
+    TimeSpan? CarouselIdleThreshold = null,
+    long? ChunkCacheBytes = null);
+
+/// <summary>
+/// Why a receiver did or did not relay a chunk to a peer that asked for it — see
+/// <see cref="ReceiverSession.ChunkServeCount"/> and <see cref="ReceiverSession.ChunkServeObserved"/>.
+///
+/// <para><b>Why this exists at all.</b> Peer-served repair degrades <i>silently</i> in three independent ways
+/// that have accumulated over three milestones: a peer on a mismatched <c>--datagram-size</c> stops being able
+/// to relay (M9), a receiver whose sink is not an <see cref="IReadableFileSink"/> cannot serve an evicted chunk,
+/// and a chunk verified before the KEY_GRANT has no plaintext to rebuild from. Each is individually harmless —
+/// the requester falls back to the sender — but together they mean the bandwidth-offload feature can be
+/// completely non-functional with no error, no log and no counter anywhere. These are that counter.</para>
+/// </summary>
+public enum ChunkServeOutcome
+{
+    /// <summary>Relayed straight from the in-memory ciphertext cache.</summary>
+    ServedFromCache,
+    /// <summary>Relayed after re-reading the plaintext from disk and re-encrypting it (the cold path).</summary>
+    ServedByRebuild,
+    /// <summary>We hold no verified proof for this chunk, so we never verified it. The ordinary "not my chunk" case.</summary>
+    DeclinedNotVerified,
+    /// <summary>Evicted, and the content key has not been granted yet, so the plaintext was never written.</summary>
+    DeclinedNoContentKey,
+    /// <summary>Evicted while still awaiting decryption — its plaintext is not on disk to read back.</summary>
+    DeclinedAwaitingDecrypt,
+    /// <summary>Evicted, and this session's <see cref="IFileSink"/> does not implement <see cref="IReadableFileSink"/>.</summary>
+    DeclinedSinkNotReadable,
+    /// <summary>Evicted, and reading the plaintext back failed or came up short (moved, locked, or closed file).</summary>
+    DeclinedReadFailed,
+    /// <summary>Rebuilt, but the result did not verify against the signed Merkle root — the destination changed underneath us.</summary>
+    DeclinedReverifyFailed,
+}
 
 /// <summary>
 /// Drives the receiver side of a single transfer over one <see cref="IMulticastTransport"/>: evaluates
@@ -135,6 +173,46 @@ public sealed class ReceiverSession
     /// </summary>
     public static readonly TimeSpan DefaultCarouselIdleThreshold = TimeSpan.FromMilliseconds(1000);
 
+    /// <summary>
+    /// Default ceiling on retained verified-chunk <b>ciphertext</b>. Override per session via
+    /// <see cref="ReceiverSessionOptions.ChunkCacheBytes"/>.
+    ///
+    /// <para><b>What this bounds and why it had to exist.</b> A receiver keeps the ciphertext of every chunk it
+    /// verifies so it can relay chunks to peers during repair. That cache previously had no eviction at all — it
+    /// grew to the full size of the transfer, so a 5 GB transfer retained ~5 GB, every buffer of it on the large
+    /// object heap at the 256 KiB default chunk size. That is a hard wall (an <c>OutOfMemoryException</c> that
+    /// terminates the process), not a rate limit, and it scaled with transfer size rather than with anything the
+    /// repair protocol actually needs.</para>
+    ///
+    /// <para><b>Why 32 MiB.</b> The cache only has to cover the window in which a peer can still usefully ask for
+    /// a chunk before falling back to a cold read. Repair requests are emitted on the caller's repair period
+    /// (250 ms in <c>Castr.Cli</c>) and a file's carousel valve opens at
+    /// <see cref="DefaultCarouselIdleThreshold"/> (1 s), so the interesting window is on the order of a second of
+    /// transfer. 32 MiB is ~1.3 s at the ~24 MB/s loopback figure in <c>docs/benchmarks/throughput-runs.md</c>
+    /// and ~2.7 s at this LAN's ~11.8 MB/s multicast ceiling — comfortably past both, and 128 chunks at the
+    /// 256 KiB default. Note it is deliberately <i>smaller</i> than the largest burst one inbound CHUNK_REQUEST
+    /// can command (<c>MaxChunksPerRequestFor(1472)</c> = 336 chunks = 84 MiB): a bulk cold-start request is
+    /// exactly the case that should be served from disk rather than from a cache sized for it.</para>
+    ///
+    /// <para><b>The cold path.</b> Evicting ciphertext is safe because it can be reconstructed exactly:
+    /// <see cref="ContentKey.EncryptChunk"/> is a pure deterministic function of
+    /// (key, sessionId, fileIndex, chunkIndex, plaintext) — the ChaCha20-Poly1305 nonce is
+    /// <c>fileIndex|chunkIndex|0000</c> and the AAD is <c>sessionId|fileIndex|chunkIndex</c>, neither of which
+    /// carries any randomness — so re-reading the plaintext this receiver already wrote to disk and re-encrypting
+    /// it reproduces the evicted ciphertext byte for byte. <c>SenderSession.SendChunkAsync</c> has relied on the
+    /// same property since M1: it re-reads and re-encrypts on every repair serve, and the receiver's packet
+    /// assembler accumulates carousel and repair fragments of one chunk interchangeably.</para>
+    ///
+    /// <para><b>Merkle proofs are retained, not regenerated.</b> A proof cannot be rebuilt by the receiver:
+    /// <see cref="MerkleTree.GetProof"/> needs the whole leaf set for the file and the receiver holds only the
+    /// signed root, so mid-transfer — precisely when repair matters — it has no way to derive the sibling hashes.
+    /// Proofs are therefore kept for the life of the session in <see cref="_chunkProofs"/>. They are small
+    /// against what they replace: ~<c>32 x log2(chunkCount)</c> bytes of hash, ~1.5 KB of object graph in
+    /// practice, against 256 KiB of ciphertext — a ~170x reduction, and the reason this design is a bound on the
+    /// large term rather than on everything.</para>
+    /// </summary>
+    public const long DefaultChunkCacheBytes = 32L * 1024 * 1024;
+
     private readonly byte[] _receiverId;
     private readonly ITrustStore _trustStore;
     private readonly IMulticastTransport _transport;
@@ -170,8 +248,81 @@ public sealed class ReceiverSession
 
     private readonly Dictionary<int, ChunkBitmap> _bitmaps = [];
     private readonly Dictionary<int, IFileSink> _sinks = [];
-    private readonly Dictionary<(int File, int Chunk), (byte[] Ciphertext, MerkleProof Proof)> _chunkCache = [];
     private readonly HashSet<(int File, int Chunk)> _pendingDecrypt = [];
+
+    // ---- Verified-chunk cache (see DefaultChunkCacheBytes) ----
+    //
+    // Split deliberately in two, because the two halves have wildly different sizes and only one of them can be
+    // reconstructed:
+    //
+    //   _chunkProofs      — the Merkle proof for every chunk this receiver has verified. Retained for the whole
+    //                       session. Unbounded in chunk count but ~170x smaller than the ciphertext it replaces,
+    //                       and NOT reconstructible: MerkleTree.GetProof needs the file's whole leaf set and this
+    //                       side holds only the signed root.
+    //   _cachedCiphertext — the verified ciphertext, byte-bounded and evicted least-recently-used. Reconstructible
+    //                       exactly by re-reading the plaintext from the sink and re-encrypting (deterministic
+    //                       AEAD), which is what TryGetServableChunkAsync does on a miss.
+    //
+    // _lru is most-recently-used first; each dictionary value is that chunk's node in it, so a hit is O(1) to
+    // promote. All of this is touched only under _stateGate, like every other dictionary in this class.
+    private readonly Dictionary<(int File, int Chunk), MerkleProof> _chunkProofs = [];
+    private readonly Dictionary<(int File, int Chunk), LinkedListNode<CachedChunk>> _cachedCiphertext = [];
+    private readonly LinkedList<CachedChunk> _lru = new();
+    private readonly long _chunkCacheBytes;
+    private long _cachedBytes;
+
+    private sealed record CachedChunk((int File, int Chunk) Key, byte[] Ciphertext);
+
+    // Peer chunk-serving work: planned under _stateGate by HandleChunkRequest, executed by a dedicated worker
+    // task (RunChunkServeWorkerAsync) that shares nothing with the receive loop.
+    //
+    // Why a separate task rather than a post-gate drain in RunAsync — a distinction that cost a failed test to
+    // learn. Serving an EVICTED chunk costs a disk read plus a ChaCha20 re-encrypt plus a BLAKE3 re-verify:
+    // ~0.8 ms per 256 KiB chunk with a warm page cache, 5-10 ms when the read is a real seek on a transfer larger
+    // than RAM. One CHUNK_REQUEST may name up to MaxChunksPerRequest (336) indices, so ONE unauthenticated
+    // datagram (HandleChunkRequest checks only the session ID) buys ~263 ms of work warm and 1.7-3.4 s cold.
+    //
+    // Doing that inline under _stateGate was the original defect: no packet is handled and no repair pass runs
+    // while the gate is held, and the cold figure exceeds CarouselIdleThreshold — which is exactly the input a
+    // false idle needs, and a false idle restores the full M7 repair storm. But merely moving it *after* the gate
+    // release, still on RunAsync's own loop, only fixes half of that: repair passes are freed, while packet
+    // processing — and therefore watermark advancement, the thing the valve actually watches — is still stalled
+    // behind the read. Only a separate task removes the class.
+    //
+    // Bounded and DropWrite on purpose: a flood of requests is discarded rather than queued, which is the
+    // degradation the repair protocol already expects (the requester's own timer re-asks and reaches another peer
+    // or the sender). Capacity is one request's worth of indices.
+    private readonly Channel<PendingChunkServe> _serveChannel;
+
+    /// <summary>
+    /// One chunk this receiver has agreed to relay to a peer. <see cref="Ciphertext"/> non-null means it was a
+    /// cache hit and the bytes are ready; null means <see cref="Rebuild"/> carries everything the cold path needs
+    /// to reconstruct them off-gate. Every field is either immutable or safe to touch outside
+    /// <see cref="_stateGate"/> — see <see cref="ColdRebuild"/>.
+    /// </summary>
+    private sealed record PendingChunkServe(
+        byte[] SessionId,
+        byte[] RequestNonce,
+        int FileIndex,
+        int ChunkIndex,
+        MerkleProof Proof,
+        byte[]? Ciphertext,
+        ColdRebuild? Rebuild);
+
+    /// <summary>
+    /// The inputs to an off-gate cold rebuild, snapshotted under <see cref="_stateGate"/>.
+    ///
+    /// <para>Each one is safe to use without the gate: <see cref="ManifestFileEntry"/> is an immutable record from
+    /// the signed manifest; <see cref="ContentKey"/> is set once and NSec keys are safe for concurrent algorithm
+    /// use; <see cref="IReadableFileSink"/> reads are positional and stated to be safe alongside writes to other
+    /// ranges. The one genuine race is a sink being <c>Complete()</c>d by the gated path mid-read, which surfaces
+    /// as <see cref="ObjectDisposedException"/> and is caught and reported as a decline — it fails closed.</para>
+    /// </summary>
+    private sealed record ColdRebuild(ManifestFileEntry File, IReadableFileSink Sink, ContentKey Key);
+
+    // Serve outcome counters, indexed by (int)ChunkServeOutcome. Incremented from both the gated planning path
+    // and the un-gated drain, hence Interlocked rather than plain increments.
+    private readonly long[] _serveCounters = new long[Enum.GetValues<ChunkServeOutcome>().Length];
 
     // PEER_HAVE coalescing state (see PeerHaveInterval). _lastPeerHaveAt is when this file's bitmap was last
     // announced; _pendingPeerHave holds bitmap snapshots taken under _stateGate but not yet sent, so the send
@@ -253,9 +404,17 @@ public sealed class ReceiverSession
         _maxDatagramPayloadBytes = maxDatagramPayloadBytes;
         _peerHaveInterval = options.PeerHaveInterval ?? DefaultPeerHaveInterval;
         _carouselIdleThreshold = options.CarouselIdleThreshold ?? DefaultCarouselIdleThreshold;
+        // Zero is a legitimate setting ("never retain ciphertext, always serve cold"); negative is not.
+        _chunkCacheBytes = Math.Max(0, options.ChunkCacheBytes ?? DefaultChunkCacheBytes);
         // Bound on chunks this receiver will serve from a single inbound CHUNK_REQUEST when relaying to a peer —
-        // see HandleChunkRequestAsync. Derived from this session's own datagram budget, mirroring SenderSession.
+        // see HandleChunkRequest. Derived from this session's own datagram budget, mirroring SenderSession.
         _maxChunksServedPerRequest = RepairOptions.MaxChunksPerRequestFor(maxDatagramPayloadBytes);
+        _serveChannel = Channel.CreateBounded<PendingChunkServe>(new BoundedChannelOptions(_maxChunksServedPerRequest)
+        {
+            FullMode = BoundedChannelFullMode.DropWrite, // shed load rather than queue it — see _serveChannel
+            SingleReader = true,
+            SingleWriter = true,                         // only the gated packet path ever writes
+        });
 
         // Every receiver identity holds its own X25519 encryption keypair (ADR-0003).
         _encryptionKey = EncryptionKeys.Create();
@@ -286,6 +445,27 @@ public sealed class ReceiverSession
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         EmitProgress();
+
+        // Peer chunk relays run on their own task for the whole life of the receive, so an evicted chunk's disk
+        // read can never stall packet processing (see _serveChannel). Started here rather than in the constructor
+        // so a session that is never run starts no background work.
+        var serveWorker = RunChunkServeWorkerAsync(cancellationToken);
+        try
+        {
+            await ReceiveLoopAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Let the worker finish whatever is already queued — including a request that arrived in the same
+            // packet as the final chunk — then surface any fault it hit rather than swallowing it (M6 round 3).
+            _serveChannel.Writer.TryComplete();
+            try { await serveWorker.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+        }
+    }
+
+    private async Task ReceiveLoopAsync(CancellationToken cancellationToken)
+    {
         await foreach (var packet in _transport.ReceiveAsync(cancellationToken).ConfigureAwait(false))
         {
             // Reassemble MTU-safe wire packets back into a whole message before decoding; a chunk that is
@@ -486,7 +666,8 @@ public sealed class ReceiverSession
                     _peerTable.Observe(peerHave, _clock.UtcNow);
                 break;
             case ChunkRequestMessage chunkRequest:
-                await HandleChunkRequestAsync(chunkRequest, ct).ConfigureAwait(false);
+                // Planning only — the read/rebuild/send happens in DrainPendingChunkServesAsync, off the gate.
+                HandleChunkRequest(chunkRequest);
                 break;
             // AnnounceMessage: nothing to do in this MVP — trust and initialization both happen on MANIFEST.
             // JoinRequestMessage: a peer's request to the sender — not our concern.
@@ -580,9 +761,14 @@ public sealed class ReceiverSession
 
         _contentKey = ContentKey.Import(raw);
 
-        // Drain any ciphertext chunks that arrived (and were verified) before the key did.
+        // Drain any ciphertext chunks that arrived (and were verified) before the key did. Every one of them is
+        // pinned in the cache (pinning is exactly "not yet written to disk"), so the lookup cannot miss; the
+        // TryGetValue is defensive rather than expected, and skipping is the only safe response if it ever fails.
         foreach (var key in _pendingDecrypt.ToList())
-            await DecryptWriteAndTrackAsync(key.File, key.Chunk, ct).ConfigureAwait(false);
+        {
+            if (_cachedCiphertext.TryGetValue(key, out var node))
+                await DecryptWriteAndTrackAsync(key.File, key.Chunk, node.Value.Ciphertext, ct).ConfigureAwait(false);
+        }
 
         EmitProgress();
     }
@@ -654,22 +840,25 @@ public sealed class ReceiverSession
 
         bitmap.Set(chunkIndex);
         _verifiedBytes += ChunkLayout.GetRange(file.Size, file.ChunkSize, chunkIndex).Length;
-        _chunkCache[(fileIndex, chunkIndex)] = (ciphertext, proof); // cached as ciphertext, for peer repair relay
         _repairCoordinator.MarkFulfilled(fileIndex, chunkIndex);
         _pendingDecrypt.Add((fileIndex, chunkIndex));
 
+        // Cached as ciphertext, for peer repair relay. The proof is kept for the session; the ciphertext enters a
+        // byte-bounded LRU. Added AFTER _pendingDecrypt so eviction can see that this chunk is not yet on disk
+        // and must not be dropped (see AdmitToCache / EvictDownToBudget).
+        AdmitToCache(fileIndex, chunkIndex, ciphertext, proof);
+
         // Decrypt-and-write now if we already hold the content key; otherwise it stays pending until KEY_GRANT.
         if (_contentKey is not null)
-            await DecryptWriteAndTrackAsync(fileIndex, chunkIndex, ct).ConfigureAwait(false);
+            await DecryptWriteAndTrackAsync(fileIndex, chunkIndex, ciphertext, ct).ConfigureAwait(false);
 
         QueuePeerHave(fileIndex);
 
         EmitProgress();
     }
 
-    private async Task DecryptWriteAndTrackAsync(int fileIndex, int chunkIndex, CancellationToken ct)
+    private async Task DecryptWriteAndTrackAsync(int fileIndex, int chunkIndex, byte[] ciphertext, CancellationToken ct)
     {
-        var (ciphertext, _) = _chunkCache[(fileIndex, chunkIndex)];
         var plaintext = _contentKey!.TryDecryptChunk(Manifest!.Manifest.SessionId, fileIndex, chunkIndex, ciphertext);
         if (plaintext is null)
             return; // Merkle-valid ciphertext that fails AEAD should not happen with the right key; leave pending.
@@ -677,7 +866,10 @@ public sealed class ReceiverSession
         var file = Manifest.Manifest.Files[fileIndex];
         var range = ChunkLayout.GetRange(file.Size, file.ChunkSize, chunkIndex);
         await _sinks[fileIndex].WriteAsync(range.Offset, plaintext, ct).ConfigureAwait(false);
+        // Only now is this chunk's plaintext durable, which is exactly what makes its ciphertext evictable: the
+        // cold path can re-read and re-encrypt it. Until this line runs the entry is pinned in the cache.
         _pendingDecrypt.Remove((fileIndex, chunkIndex));
+        EvictDownToBudget();
 
         if (_bitmaps[fileIndex].IsComplete
             && !_pendingDecrypt.Any(k => k.File == fileIndex)
@@ -687,7 +879,13 @@ public sealed class ReceiverSession
         }
     }
 
-    private async Task HandleChunkRequestAsync(ChunkRequestMessage request, CancellationToken ct)
+    /// <summary>
+    /// Decides, under <see cref="_stateGate"/>, which of a peer's requested chunks this receiver will relay, and
+    /// queues them for <see cref="DrainPendingChunkServesAsync"/> to actually read/rebuild/send once the gate has
+    /// been released. Does no I/O and no cryptography — that is the entire point (see
+    /// <see cref="_pendingChunkServes"/>).
+    /// </summary>
+    private void HandleChunkRequest(ChunkRequestMessage request)
     {
         if (Manifest is null || !request.SessionId.AsSpan().SequenceEqual(Manifest.Manifest.SessionId))
             return;
@@ -696,26 +894,62 @@ public sealed class ReceiverSession
 
         // Bound how much one inbound request can make this receiver do, for exactly the reason SenderSession's
         // own copy of this cap exists — and more sharply, because a receiver is simultaneously trying to process
-        // its OWN inbound chunk stream. This handler is awaited inline from the gated packet path, so while it
-        // runs no other packet is handled at all; a peer that sends a fragmented 5,000-index request (hostile, or
-        // simply built by a pre-cap version of this code) would otherwise have a receiver re-serving 5,000 chunks
-        // inline and stalling its own transfer. Overflow is dropped rather than queued: the requester's own
-        // repair timer re-asks for whatever is still missing, so nothing is lost.
+        // its OWN inbound chunk stream. A peer that sends a fragmented 5,000-index request (hostile, or simply
+        // built by a pre-cap version of this code) would otherwise have a receiver re-serving 5,000 chunks.
+        // Overflow is dropped rather than queued: the requester's own repair timer re-asks for whatever is still
+        // missing, so nothing is lost. This also bounds _pendingChunkServes, which is drained per packet.
         var servedIndices = request.ChunkIndices.Length <= _maxChunksServedPerRequest
             ? request.ChunkIndices
             : request.ChunkIndices[.._maxChunksServedPerRequest];
 
         foreach (var chunkIndex in servedIndices)
         {
-            if (!_chunkCache.TryGetValue((request.FileIndex, chunkIndex), out var cached))
-                continue; // we don't have it either — let someone else (or the sender) answer
+            var planned = PlanChunkServe(request.SessionId, request.RequestNonce, request.FileIndex, chunkIndex);
+            // TryWrite never blocks: the channel is bounded with DropWrite, so a flood is shed here rather than
+            // queued, and the requester's own repair timer re-asks elsewhere.
+            if (planned is not null)
+                _serveChannel.Writer.TryWrite(planned);
+        }
+    }
+
+    /// <summary>
+    /// Reads, rebuilds and sends every chunk <see cref="HandleChunkRequest"/> queued, on its own task for the
+    /// life of the receive. Shares nothing with the receive loop: every input was snapshotted under
+    /// <see cref="_stateGate"/> (see <see cref="ColdRebuild"/>), and the only state it touches afterwards is the
+    /// transport and the <see cref="ChunkServeOutcome"/> counters, both of which are safe concurrently.
+    ///
+    /// <para>This is where an evicted chunk's disk read, re-encryption and re-verification happen. Running them
+    /// anywhere on the receive path — under the gate, or merely after releasing it — let one unauthenticated
+    /// CHUNK_REQUEST stall packet processing for hundreds of milliseconds warm and seconds cold, long enough to
+    /// trip <see cref="CarouselIdleThreshold"/> and re-open the M7 repair storm. See <see cref="_serveChannel"/>
+    /// for the measured figures and for why the post-gate variant was not sufficient.</para>
+    ///
+    /// <para>Exceptions are deliberately <b>not</b> swallowed — they surface where <see cref="RunAsync"/> joins
+    /// this task. A silently-dying background loop is the exact defect M6 round 3 found in the receive path.</para>
+    /// </summary>
+    private async Task RunChunkServeWorkerAsync(CancellationToken ct)
+    {
+        await foreach (var serve in _serveChannel.Reader.ReadAllAsync(ct).ConfigureAwait(false))
+        {
+            var ciphertext = serve.Ciphertext;
+            if (ciphertext is null)
+            {
+                ciphertext = await RebuildCiphertextAsync(serve, ct).ConfigureAwait(false);
+                if (ciphertext is null)
+                    continue; // decline — already counted inside RebuildCiphertextAsync
+                Count(ChunkServeOutcome.ServedByRebuild, serve.FileIndex, serve.ChunkIndex);
+            }
+            else
+            {
+                Count(ChunkServeOutcome.ServedFromCache, serve.FileIndex, serve.ChunkIndex);
+            }
 
             // Relay large chunks as identity-keyed wire packets (byte-identical to the sender's), so a
             // requester accumulates them across sources/rounds; small chunks go as a whole ChunkResponse.
-            if (ChunkPacketizer.RequiresPacketization(cached.Ciphertext.Length, cached.Proof, _maxDatagramPayloadBytes))
+            if (ChunkPacketizer.RequiresPacketization(ciphertext.Length, serve.Proof, _maxDatagramPayloadBytes))
             {
                 foreach (var packet in ChunkPacketizer.Split(
-                    Manifest.Manifest.SessionId, request.FileIndex, chunkIndex, cached.Ciphertext, cached.Proof, _maxDatagramPayloadBytes))
+                    serve.SessionId, serve.FileIndex, serve.ChunkIndex, ciphertext, serve.Proof, _maxDatagramPayloadBytes))
                 {
                     await SendMessageAsync(packet, ct).ConfigureAwait(false);
                 }
@@ -723,9 +957,193 @@ public sealed class ReceiverSession
             }
 
             var response = new ChunkResponseMessage(
-                Manifest.Manifest.SessionId, request.RequestNonce, request.FileIndex, chunkIndex, cached.Ciphertext, cached.Proof);
+                serve.SessionId, serve.RequestNonce, serve.FileIndex, serve.ChunkIndex, ciphertext, serve.Proof);
             await SendMessageAsync(response, ct).ConfigureAwait(false);
         }
+    }
+
+    // ---- Verified-chunk cache ----
+
+    /// <summary>
+    /// Total bytes of verified chunk ciphertext currently retained. Bounded by
+    /// <see cref="ReceiverSessionOptions.ChunkCacheBytes"/> except while chunks are pinned awaiting a KEY_GRANT
+    /// (see <see cref="EvictDownToBudget"/>). Exposed for tests and diagnostics; reading it does not take
+    /// <see cref="_stateGate"/>, so treat it as a sample rather than a synchronized snapshot.
+    /// </summary>
+    public long CachedCiphertextBytes => Interlocked.Read(ref _cachedBytes);
+
+    /// <summary>Number of chunks whose ciphertext is currently resident. Diagnostics only; see the caveat above.</summary>
+    public int CachedChunkCount => _cachedCiphertext.Count;
+
+    /// <summary>
+    /// Records a freshly verified chunk: the proof for the session, the ciphertext into the LRU, then evicts
+    /// down to budget. Called under <see cref="_stateGate"/>.
+    /// </summary>
+    private void AdmitToCache(int fileIndex, int chunkIndex, byte[] ciphertext, MerkleProof proof)
+    {
+        var key = (fileIndex, chunkIndex);
+        _chunkProofs[key] = proof;
+
+        if (_cachedCiphertext.ContainsKey(key))
+            return; // already resident (this path is reached once per chunk, but stay idempotent)
+
+        var node = _lru.AddFirst(new CachedChunk(key, ciphertext));
+        _cachedCiphertext[key] = node;
+        Interlocked.Add(ref _cachedBytes, ciphertext.Length);
+        EvictDownToBudget();
+    }
+
+    /// <summary>
+    /// Drops least-recently-used ciphertext until the cache is within budget, skipping chunks that are still
+    /// awaiting decryption. Called under <see cref="_stateGate"/>.
+    ///
+    /// <para><b>Pinning is a correctness requirement, not a nicety.</b> A chunk verified before the KEY_GRANT
+    /// arrives has no plaintext on disk yet, so its ciphertext is the only copy in existence and the cold path
+    /// cannot rebuild it. Evicting one would strand that chunk permanently: the bitmap already says "have", so
+    /// repair will never re-request it, and it would never be written. So a pinned entry is skipped even when
+    /// that means exceeding the budget — the overshoot is bounded by how much arrives inside the
+    /// JOIN_REQUEST/KEY_GRANT round trip, which is a startup window, whereas stranding a chunk is permanent.</para>
+    /// </summary>
+    private void EvictDownToBudget()
+    {
+        var node = _lru.Last;
+        while (node is not null && Interlocked.Read(ref _cachedBytes) > _chunkCacheBytes)
+        {
+            var previous = node.Previous;
+            if (!_pendingDecrypt.Contains(node.Value.Key))
+            {
+                _lru.Remove(node);
+                _cachedCiphertext.Remove(node.Value.Key);
+                Interlocked.Add(ref _cachedBytes, -node.Value.Ciphertext.Length);
+            }
+            node = previous;
+        }
+    }
+
+    /// <summary>
+    /// Decides whether a requested chunk can be relayed and, if so, returns everything needed to relay it —
+    /// either the cached ciphertext outright, or the snapshot a cold rebuild will need. Returns null (having
+    /// counted the reason) when this receiver cannot serve it at all. <b>Called under
+    /// <see cref="_stateGate"/>; does no I/O and no cryptography.</b>
+    ///
+    /// <para>On a cache hit the entry is promoted to most-recently-used. On a miss the caller reconstructs the
+    /// ciphertext off-gate: the plaintext this receiver already wrote is read back from the sink and
+    /// re-encrypted. That reproduces the evicted bytes <b>exactly</b>, because
+    /// <see cref="ContentKey.EncryptChunk"/> derives its ChaCha20-Poly1305 nonce from
+    /// <c>(fileIndex, chunkIndex)</c> and its AAD from <c>(sessionId, fileIndex, chunkIndex)</c> and adds no
+    /// randomness anywhere — the same property <c>SenderSession</c> has relied on since M1 to re-serve a chunk
+    /// it never cached.</para>
+    ///
+    /// <para>A reconstructed chunk is deliberately <b>not</b> re-admitted to the LRU. A bulk cold-start request
+    /// can name up to <c>MaxChunksPerRequest</c> (336) indices — 84 MiB at the default chunk size — and
+    /// admitting those would flush the recent-chunk working set that the rest of the swarm is actually asking
+    /// for, converting one bulk request into a cache-wide miss storm.</para>
+    /// </summary>
+    private PendingChunkServe? PlanChunkServe(byte[] sessionId, byte[] requestNonce, int fileIndex, int chunkIndex)
+    {
+        var key = (fileIndex, chunkIndex);
+        if (!_chunkProofs.TryGetValue(key, out var proof))
+        {
+            Count(ChunkServeOutcome.DeclinedNotVerified, fileIndex, chunkIndex);
+            return null; // never verified here — let someone else (or the sender) answer
+        }
+
+        if (_cachedCiphertext.TryGetValue(key, out var node))
+        {
+            _lru.Remove(node);
+            _lru.AddFirst(node);
+            // The cached array is never mutated after admission, so handing the reference off-gate is safe.
+            return new PendingChunkServe(sessionId, requestNonce, fileIndex, chunkIndex, proof, node.Value.Ciphertext, null);
+        }
+
+        // Evicted. Snapshot what a rebuild needs, if all of it is available.
+        if (_contentKey is null)
+        {
+            Count(ChunkServeOutcome.DeclinedNoContentKey, fileIndex, chunkIndex);
+            return null;
+        }
+        if (_pendingDecrypt.Contains(key))
+        {
+            Count(ChunkServeOutcome.DeclinedAwaitingDecrypt, fileIndex, chunkIndex);
+            return null; // the plaintext was never written — nothing to read back
+        }
+        if (Manifest is null || !_sinks.TryGetValue(fileIndex, out var sink) || sink is not IReadableFileSink readable)
+        {
+            Count(ChunkServeOutcome.DeclinedSinkNotReadable, fileIndex, chunkIndex);
+            return null; // a write-only sink simply cannot serve evicted chunks; degrade quietly
+        }
+
+        return new PendingChunkServe(
+            sessionId, requestNonce, fileIndex, chunkIndex, proof,
+            Ciphertext: null,
+            new ColdRebuild(Manifest.Manifest.Files[fileIndex], readable, _contentKey));
+    }
+
+    /// <summary>
+    /// The cold path: reads a chunk's plaintext back from the destination and re-encrypts it, reproducing the
+    /// evicted ciphertext byte for byte. <b>Runs outside <see cref="_stateGate"/></b> — every input was
+    /// snapshotted under it (see <see cref="ColdRebuild"/>). Returns null, having counted the reason, if the
+    /// chunk cannot be rebuilt.
+    ///
+    /// <para>The result is re-verified against the signed Merkle root before it is handed out. That is cheap
+    /// next to the disk read, and it means a receiver whose destination file was modified underneath it declines
+    /// to serve rather than relaying bytes a peer would have to reject. Determinism of
+    /// <see cref="ContentKey.EncryptChunk"/> itself is proven by <c>ContentKeyDeterminismTests</c>.</para>
+    /// </summary>
+    private async ValueTask<byte[]?> RebuildCiphertextAsync(PendingChunkServe serve, CancellationToken ct)
+    {
+        var rebuild = serve.Rebuild!;
+        var file = rebuild.File;
+        var range = ChunkLayout.GetRange(file.Size, file.ChunkSize, serve.ChunkIndex);
+        var plaintext = new byte[range.Length];
+
+        int read;
+        try
+        {
+            read = await rebuild.Sink.ReadAsync(range.Offset, plaintext, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or UnauthorizedAccessException)
+        {
+            // Includes the one real off-gate race: the gated path calling Complete() on this sink mid-read.
+            // Failing closed here is the correct resolution — the requester falls back to another source.
+            Count(ChunkServeOutcome.DeclinedReadFailed, serve.FileIndex, serve.ChunkIndex);
+            return null;
+        }
+
+        if (read != range.Length)
+        {
+            Count(ChunkServeOutcome.DeclinedReadFailed, serve.FileIndex, serve.ChunkIndex);
+            return null;
+        }
+
+        var ciphertext = rebuild.Key.EncryptChunk(serve.SessionId, serve.FileIndex, serve.ChunkIndex, plaintext);
+
+        if (!ManifestVerifier.VerifyChunk(file.MerkleRoot, ChunkHash.Compute(ciphertext), serve.Proof))
+        {
+            Count(ChunkServeOutcome.DeclinedReverifyFailed, serve.FileIndex, serve.ChunkIndex);
+            return null;
+        }
+
+        return ciphertext;
+    }
+
+    /// <summary>
+    /// How many times this receiver has reached <paramref name="outcome"/> while answering (or declining to
+    /// answer) a peer's chunk request. See <see cref="ChunkServeOutcome"/> for why these are worth counting.
+    /// </summary>
+    public long ChunkServeCount(ChunkServeOutcome outcome) => Interlocked.Read(ref _serveCounters[(int)outcome]);
+
+    /// <summary>
+    /// Raised for every chunk-serve decision, with the file and chunk index it concerned. Purely observational.
+    /// Handlers run on the receive loop's thread (or, for the unicast swarm path, the caller's) and should return
+    /// quickly.
+    /// </summary>
+    public event Action<ChunkServeOutcome, int, int>? ChunkServeObserved;
+
+    private void Count(ChunkServeOutcome outcome, int fileIndex, int chunkIndex)
+    {
+        Interlocked.Increment(ref _serveCounters[(int)outcome]);
+        ChunkServeObserved?.Invoke(outcome, fileIndex, chunkIndex);
     }
 
     /// <summary>
@@ -885,17 +1303,36 @@ public sealed class ReceiverSession
     {
         // Read the verified-chunk cache under the same gate the receive loop mutates it with, so peer-serving
         // never races the multicast receive path (the concurrency invariant _stateGate exists for).
+        // Same hit-or-reconstruct decision the multicast repair serve uses, so a bounded cache does not silently
+        // shrink what the unicast swarm tier can offer a mobile puller either — and, like that path, only the
+        // *planning* half runs under the gate. A mobile puller asking for an evicted chunk must not be able to
+        // hold this receiver's packet loop across a disk read any more than a multicast peer can.
+        PendingChunkServe? planned;
         await _stateGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            return _chunkCache.TryGetValue((fileIndex, chunkIndex), out var cached)
-                ? new SwarmChunk(cached.Ciphertext, cached.Proof)
-                : null;
+            planned = PlanChunkServe(Manifest?.Manifest.SessionId ?? [], [], fileIndex, chunkIndex);
         }
         finally
         {
             _stateGate.Release();
         }
+
+        if (planned is not { } serve)
+            return null;
+
+        if (serve.Ciphertext is { } cached)
+        {
+            Count(ChunkServeOutcome.ServedFromCache, fileIndex, chunkIndex);
+            return new SwarmChunk(cached, serve.Proof);
+        }
+
+        var rebuilt = await RebuildCiphertextAsync(serve, ct).ConfigureAwait(false);
+        if (rebuilt is null)
+            return null;
+
+        Count(ChunkServeOutcome.ServedByRebuild, fileIndex, chunkIndex);
+        return new SwarmChunk(rebuilt, serve.Proof);
     }
 
     private sealed class ReceiverContentSource(ReceiverSession session) : ISwarmContentSource

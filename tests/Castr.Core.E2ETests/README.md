@@ -65,6 +65,23 @@ Note the slash counts differ by consumer and this is not a typo: the docker **CL
 `E2EFactAttribute` shells out to the CLI, exporting a single `DOCKER_HOST` value for both breaks one of
 them — which is why this is set in-process, after that probe, rather than in your shell.
 
+### A second hang that looks identical, and is not Docker's fault (fixed)
+
+`PublishCli()` used to call `StandardOutput.ReadToEnd()` before `WaitForExit()`. MSBuild defaults to
+`nodeReuse:true`, so the long-lived MSBuild node processes left behind by any earlier `dotnet build` or
+`dotnet test` **inherit the redirected pipe handles** of the `dotnet publish` child. The pipe therefore never
+reaches EOF and `ReadToEnd()` blocks forever — even though the publish has already exited and written its
+output to disk.
+
+The symptom is tens of minutes of a hung run with **zero Docker activity**, which is almost exactly the
+symptom of the npipe hang above, so it is easy to misdiagnose. If you ever see that shape again, get a managed
+stack (`dotnet-stack report -p <testhost-pid>`) before assuming it is Testcontainers — that is what identified
+this one.
+
+The fixture now drains both streams with `BeginOutputReadLine`/`BeginErrorReadLine` and waits on process exit
+with a timeout, so an inherited handle holding the pipe open no longer matters. `MSBUILDDISABLENODEREUSE=1`
+was the workaround before the fix and is no longer needed.
+
 ## Scenarios
 
 | Test | Receivers | Payload | Chunks | Loss | Asserts |
