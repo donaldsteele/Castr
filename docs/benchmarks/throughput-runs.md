@@ -1200,3 +1200,32 @@ Two rules reinforced: **a throughput figure that is physically impossible is a h
 proven otherwise**, and **always assert transfer completion, not just process exit** — adding a
 `Complete` column (file size == expected) is what made the failure visible, since the broken arm exited
 with success-shaped timing.
+
+### Correction, same day: the leaked memberships came back within hours, and force-killing processes is why
+
+The section above states the reboot cleared the leaked loopback multicast memberships. **That was true when
+written and is no longer true.** A few hours later `netsh interface ipv4 show joins` shows **13 groups at
+`References = 0`**, including `239.192.55.55` — the shipped default — on **both** Loopback Pseudo-Interface 1
+and Ethernet, plus `.60`–`.65`, `.211`, `.212`, and `239.192.56.10/11/14/15` on Ethernet.
+
+**Cause: force-killing a `castr` process skips `DisposeAsync`, so `UdpMulticastTransport` never calls
+`DropMembership` and the join leaks.** The benchmark harness in the section above did exactly that
+(`Stop-Process -Force` on the sender), and the test suite's own runs account for the rest.
+
+So this is **not a one-off state that a reboot fixes — it is a recurring consequence of ordinary benchmark
+and test activity**, and it silently makes the default group's interface ambiguous again.
+
+Practical rules, which supersede "reboot clears it":
+
+- **Always pass `--interface` explicitly in a benchmark, and record which one.** This is the only reliable
+  mitigation; it makes the leak irrelevant rather than trying to avoid it. Every measurement in the section
+  above did this, so those numbers stand.
+- **Prefer a group nobody has leaked** for new measurement work, and check `netsh interface ipv4 show joins`
+  before trusting a run — takes seconds.
+- **Stop senders by cancellation rather than `Stop-Process -Force`** where the harness allows it. `castr send`
+  stays up serving repairs by design and has no natural exit, which is why harnesses reach for a kill.
+- Treat a benchmark that is unexpectedly ~2.6× fast as **suspected loopback**, not as a result.
+
+The underlying asymmetry is worth stating plainly: **a leaked join makes transfers look faster, never
+slower.** So this class of error always flatters the result, which is exactly the direction that survives
+review unchallenged.
