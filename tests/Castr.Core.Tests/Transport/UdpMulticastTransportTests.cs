@@ -120,7 +120,7 @@ public class UdpMulticastTransportTests
     public async Task DisposeAsync_ThenReceive_EndsEnumerationWithoutThrowing()
     {
         var group = IPAddress.Parse("239.192.56.12");
-        const int port = 46103;
+        int port = FreeUdpPort();
         var transport = new UdpMulticastTransport(group, port);
 
         var receiveTask = Task.Run(async () =>
@@ -144,7 +144,7 @@ public class UdpMulticastTransportTests
         // from the convention IAsyncDisposable implementations are expected to follow (the sibling
         // UdpUnicastTransport's DisposeAsync still tolerates repeated calls).
         var group = IPAddress.Parse("239.192.56.13");
-        const int port = 46104;
+        int port = FreeUdpPort();
         var transport = new UdpMulticastTransport(group, port);
 
         await transport.DisposeAsync();

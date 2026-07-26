@@ -152,7 +152,10 @@ public class RepairCoordinatorTests
         const int budget = WirePacketizer.DefaultMaxDatagramPayload;
         int cap = RepairOptions.MaxChunksPerRequestFor(budget);
 
-        Assert.Equal(268, cap);
+        // 336 at the shipped 1472-byte budget; it was 268 at the old 1200-byte one. The cap moved because it is
+        // a function of the budget by construction — more indices genuinely do fit in a larger datagram — not
+        // because the repair protocol was retuned.
+        Assert.Equal(336, cap);
         Assert.Equal(RepairOptions.DefaultMaxChunksPerRequest, cap);
 
         Assert.True(EncodedRequestSize(cap) <= budget, $"a {cap}-index request must fit in one datagram");
@@ -160,7 +163,7 @@ public class RepairCoordinatorTests
 
         // Pin the actual cliff, and pin that the reserved headroom really is headroom rather than luck.
         int trueMax = Enumerable.Range(1, 400).Last(n => EncodedRequestSize(n) <= budget);
-        Assert.Equal(284, trueMax);
+        Assert.Equal(352, trueMax);
         Assert.True(cap < trueMax, "the cap must leave headroom below the true single-datagram maximum");
         Assert.True(EncodedRequestSize(trueMax + 1) > budget, "one past the true maximum must not fit");
     }

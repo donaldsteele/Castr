@@ -206,9 +206,13 @@ part of the predicted regression.
     jitter and barely moved (19.6 ms -> 27.7 ms). **Margin 51x -> 36x, not 51x -> 1.6x.** Zero gaps over 500 ms
     in 16 runs; 382 ms worst on a degraded path, still no false idle.
   - **`PeerHaveInterval` (250 ms) — kept**, per the reasoning above.
-- **Datagram budget.** Still 1200, deliberately untouched by M8. The campaign's 7.2x figure pairs it with the
-  chunk size, so it now needs re-measuring against the post-M7/post-M8 baseline rather than assuming the pairing
-  still multiplies — M8 is a worked example of exactly that assumption failing.
+- **Datagram budget — ✅ DONE (2026-07-25, M9 stage 1), and the pairing assumption failed again.** Now **1472**
+  (MTU-derived), with the proof reserved on packet 0 only: **309 → 184 datagrams per 256 KiB chunk, 1.42×
+  goodput**, measured against the post-M7/post-M8 baseline exactly as this bullet asked. The campaign's 7.2x
+  figure is **withdrawn** rather than confirmed — it required 60,000-byte datagrams, which loopback carries
+  unfragmented and a real 1500-MTU segment shatters into ~41 IP fragments. See [[m9-datagram-efficiency]].
+  Note one M7 constant moved as a derived consequence: `MaxChunksPerRequest` is a function of the budget, so
+  it is now **336**, not 268, and one request datagram can command 84 MB rather than 67 MB.
 - **Suppression by overhearing, and repair-response deduplication** — still the two unimplemented rows
   in [[repair-protocol]]'s design-intent table. Note the target field that response dedup needs cannot
   simply be appended: **a new message type is additively backward-compatible (unknown tags throw in

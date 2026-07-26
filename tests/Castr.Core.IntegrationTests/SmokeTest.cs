@@ -10,7 +10,7 @@ public class SmokeTest
     public async Task RealMulticastLoopback_SendThenReceive_Works()
     {
         var group = IPAddress.Parse("239.192.55.60");
-        const int port = 45001;
+        int port = TestPorts.FreeUdp();
 
         await using IMulticastTransport a = new UdpMulticastTransport(group, port, multicastLoopback: true);
         await using IMulticastTransport b = new UdpMulticastTransport(group, port, multicastLoopback: true);

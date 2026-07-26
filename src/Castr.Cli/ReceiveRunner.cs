@@ -21,7 +21,8 @@ internal sealed record ReceiveOptions(
     string TrustStorePath,
     string? TrustSeedPath,
     bool UseTui,
-    bool MulticastLoopback = true);
+    bool MulticastLoopback = true,
+    int? DatagramSize = null);
 
 /// <summary>
 /// Drives one real <see cref="ReceiverSession"/> over UDP multicast until the transfer completes, the sender
@@ -42,6 +43,18 @@ internal static class ReceiveRunner
             console.MarkupLineInterpolated($"[red]{ex.Message}[/]");
             return ExitCodes.InvalidInput;
         }
+
+        if (options.DatagramSize is int requested
+            && (requested < WirePacketizer.MinMaxDatagramPayload || requested > WirePacketizer.MaxMaxDatagramPayload))
+        {
+            console.MarkupLineInterpolated(
+                $"[red]--datagram-size {requested} is out of range: it must be between {WirePacketizer.MinMaxDatagramPayload} and {WirePacketizer.MaxMaxDatagramPayload} bytes.[/]");
+            return ExitCodes.InvalidInput;
+        }
+
+        // Resolved once, before the session exists; see DatagramBudget. Must match every other peer in the
+        // transfer — mismatched budgets complete a direct transfer but silently lose peer-to-peer repair relay.
+        int datagramSize = DatagramBudget.Resolve(options.DatagramSize);
 
         string destination;
         try
@@ -82,10 +95,15 @@ internal static class ReceiveRunner
                 options.Group, options.Port, interfaceAddress, options.MulticastLoopback,
                 datagramFilter: DatagramFilters.Receiver);
 
+            // The receiver's own budget governs what IT emits (repair requests, gossip) and how it re-slices a
+            // chunk when relaying repair to a peer — it does not have to match the sender's to receive from it,
+            // because ChunkPacketAssembler reassembles whatever fragment lengths arrive as long as they are
+            // self-consistent for that chunk. It is fixed here, once, for the life of the session.
             var session = new ReceiverSession(
                 receiverId, trustStore, transport, SystemClock.Instance, sessionOptions,
                 sinkFactory: (path, length) => new FileSystemFileSink(path, length),
-                trustPrompt: trustPrompt);
+                trustPrompt: trustPrompt,
+                maxDatagramPayloadBytes: datagramSize);
 
             session.SenderTrustDenied += (decision, senderId) =>
             {

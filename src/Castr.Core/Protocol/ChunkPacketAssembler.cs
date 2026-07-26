@@ -40,8 +40,9 @@ public sealed class ChunkPacketAssembler
 
     /// <summary>
     /// Smallest fragment size a peer is assumed to have sliced with, used to bound <c>PacketCount</c>. Defaults to
-    /// an <b>8x tolerance</b> below the shipped datagram budget so a peer relaying on a much smaller budget still
-    /// interoperates. See <see cref="MinFragmentBytesFor"/>.
+    /// an <b>8x tolerance</b> below the shipped datagram budget. See <see cref="MinFragmentBytesFor"/> — and note
+    /// that tolerance is about <i>admitting</i> a legitimate packet count, not about making mismatched budgets
+    /// interoperate, which they do not.
     /// </summary>
     public const int DefaultMinFragmentBytes = WirePacketizer.DefaultMaxDatagramPayload / 8;
 
@@ -81,10 +82,17 @@ public sealed class ChunkPacketAssembler
     /// <summary>
     /// Smallest fragment a peer is credited with having sliced at, for a session running on
     /// <paramref name="maxDatagramPayload"/>. Deliberately <c>/8</c> rather than the true per-packet size:
-    /// <see cref="ChunkPacketizer.Split"/> sizes fragments at
-    /// <c>maxDatagramPayload - FixedEnvelopeOverhead - ProofEncodedSize(proof)</c>, and the proof term grows with
-    /// the file's chunk count, so the exact figure is not knowable from the receiving side without the proof in
-    /// hand. An 8x margin also lets a peer relaying on a smaller datagram budget interoperate.
+    /// <see cref="ChunkPacketizer.Split"/> gives packet 0
+    /// <c>maxDatagramPayload - FixedEnvelopeOverhead - ProofEncodedSize(proof)</c> bytes and every later packet
+    /// <c>maxDatagramPayload - FixedEnvelopeOverhead</c>, and the proof term grows with the file's chunk count, so
+    /// the exact figure is not knowable from the receiving side without the proof in hand.
+    ///
+    /// <para><b>Correction (M9): this margin does NOT make mismatched datagram budgets interoperate</b>, and an
+    /// earlier version of this comment implied it did. This bound only decides whether a claimed
+    /// <c>PacketCount</c> is admissible at all (a DoS guard). A budget mismatch fails earlier and
+    /// unconditionally, on <see cref="Offer"/>'s <c>PacketCount</c> equality check against the first packet seen
+    /// for that chunk. The margin's real job is to admit a legitimate relay whose *whole* chunk arrives from one
+    /// smaller-budget source; it cannot rescue a chunk already partially held at another slicing.</para>
     /// </summary>
     public static int MinFragmentBytesFor(int maxDatagramPayload) => Math.Max(1, maxDatagramPayload / 8);
 
@@ -120,16 +128,19 @@ public sealed class ChunkPacketAssembler
         //
         // The structural truth is tighter by exactly one factor — the per-packet fragment size:
         //   PacketCount <= ceil(CiphertextLength / perPacket)
-        // ChunkPacketizer.Split sets perPacket = maxDatagramPayload - FixedEnvelopeOverhead - ProofEncodedSize,
-        // ~846 bytes at the shipped 1200-byte budget, so a 256 KiB chunk is ~310 legitimate packets. We cannot
-        // recompute perPacket exactly here (the proof term depends on the file's chunk count and packet 0 may not
-        // have arrived yet), so _minFragmentBytes is deliberately 8x below the real figure, plus one packet of
-        // slack for the remainder. At the shipped budget that admits <=1,749 packets against a legitimate ~310:
-        // ~5.6x headroom for correct senders, ~150x off the attack.
+        // ChunkPacketizer.Split gives every packet after packet 0 the full maxDatagramPayload -
+        // FixedEnvelopeOverhead (1429 bytes at the shipped 1472-byte budget; only packet 0 also reserves
+        // ProofEncodedSize), so a 256 KiB chunk is ~184 legitimate packets. We cannot recompute that exactly here
+        // (the budget the sender used is not on the wire, and the proof term for packet 0 depends on the file's
+        // chunk count), so _minFragmentBytes is deliberately 8x below the real figure, plus one packet of slack
+        // for the remainder. At the shipped budget that admits <=1,426 packets against a legitimate ~184:
+        // ~7.8x headroom for correct senders, ~180x off the attack.
         //
-        // Interop risk is near zero even for a peer relaying on a smaller datagram budget, because the
-        // consistency check below already rejects any packet whose PacketCount disagrees with the first one seen
-        // for that chunk — mixed-budget sources cannot interoperate *within* a chunk regardless of this clause.
+        // This clause does not change mixed-budget behaviour either way: the consistency check below already
+        // rejects any packet whose PacketCount disagrees with the first one seen for that chunk, so mixed-budget
+        // sources cannot interoperate *within* a chunk regardless. (Stated precisely because the reverse — "the
+        // 8x tolerance absorbs a budget mismatch" — was believed during M8/M9 and is false: the tolerance gates
+        // this DoS bound only, and the mismatch fails earlier and unconditionally below.)
         //
         // Note the severity this closes is not "a flood": ~1024 datagrams (~1.2 MB) forcing GBs of long-lived
         // LOH allocation is a ~1800x-asymmetric request that terminates the process, where a flood degrades only
@@ -151,9 +162,35 @@ public sealed class ChunkPacketAssembler
         }
         else if (partial.PacketCount != packet.PacketCount || partial.CiphertextLength != packet.CiphertextLength)
         {
-            // Inconsistent metadata for this chunk (e.g. a peer that sliced with a different datagram budget).
-            // Ignore rather than corrupt the in-progress reassembly; repair still converges from one source.
-            return null;
+            // Inconsistent metadata for this chunk: the two sources sliced it differently (e.g. peers running
+            // different datagram budgets). Never splice mismatched fragments together — but do NOT keep the old
+            // buffer and drop the new packet either, which is what this did until M9 QA measured the consequence:
+            //
+            //   whichever source arrived FIRST pinned the buffer, and every packet of every other slicing was
+            //   dropped from then on. Forget() is called from exactly one place — after a *successful* assembly —
+            //   so a poisoned partial had no recovery path except LRU eviction, which needs _maxPendingChunks
+            //   other distinct chunks to go pending. A lossless transfer keeps 1-2 partials open, so in ordinary
+            //   operation that eviction never happens and the chunk is STRANDED for the rest of the transfer:
+            //   a full, correct re-delivery of all its packets could not complete it.
+            //
+            // So the newest slicing wins: drop the stale partial and re-establish the buffer from this packet.
+            // The property that matters is that a chunk is always completable by *some* source re-sending it in
+            // full, which is exactly what chunk-level repair does. The cost is that two mismatched sources
+            // transmitting the same chunk *simultaneously* can reset each other's progress; that is a
+            // throughput-shaped failure that repair retries out of, where stranding was terminal for the chunk.
+            //
+            // Adversarially this is an improvement, not a new hole. Before, one crafted packet could pin a chunk's
+            // buffer to a slicing nobody else uses and block every legitimate packet for that chunk PERMANENTLY
+            // (nothing releases the partial short of eviction). Now a hostile peer can only reset progress while
+            // it keeps transmitting — the "degrades only while the attack lasts" class, which is what the bounds
+            // above already accept, rather than a lasting denial from a single datagram.
+            //
+            // The structural fix — which retires this whole class rather than choosing a winner — is to key
+            // fragments by BYTE OFFSET rather than packet index, making two slicings of the same ciphertext
+            // interchangeable. Tracked with the assembler rewrite in wiki/synthesis/roadmap.md.
+            _partials.Remove(key);
+            partial = new Partial(packet.PacketCount, packet.CiphertextLength, ++_sequence);
+            _partials[key] = partial;
         }
 
         partial.Add(packet.PacketIndex, packet.Fragment, packet.Proof);

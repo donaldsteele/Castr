@@ -25,6 +25,7 @@ internal static class NetworkInterfaces
 
         return address;
     }
+
 }
 
 internal sealed class InvalidInterfaceException(string interfaceName, IReadOnlyList<IPAddress> candidates)

@@ -16,7 +16,8 @@ internal sealed record SendOptions(
     string IdentityPath,
     bool UseTui,
     bool MulticastLoopback = true,
-    int SendWindowSize = SenderSession.DefaultSendWindowSize);
+    int SendWindowSize = SenderSession.DefaultSendWindowSize,
+    int? DatagramSize = null);
 
 /// <summary>
 /// Drives one real <see cref="Castr.Core.Protocol.SenderSession"/> over UDP multicast. Factored out of the
@@ -35,6 +36,37 @@ internal static class SendRunner
             console.MarkupLineInterpolated(
                 $"[red]The ceiling is a memory-safety bound on chunk reassembly, not a UDP-datagram limit — Castr.Core packetizes large chunks into MTU-safe wire packets.[/]");
             return ExitCodes.InvalidInput;
+        }
+
+        if (options.DatagramSize is int requested
+            && (requested < WirePacketizer.MinMaxDatagramPayload || requested > WirePacketizer.MaxMaxDatagramPayload))
+        {
+            console.MarkupLineInterpolated(
+                $"[red]--datagram-size {requested} is out of range: it must be between {WirePacketizer.MinMaxDatagramPayload} and {WirePacketizer.MaxMaxDatagramPayload} bytes.[/]");
+            console.MarkupLineInterpolated(
+                $"[red]The floor is the IPv4 minimum-MTU payload (576 - 20 - 8); the ceiling is the hard UDP-over-IPv4 limit.[/]");
+            return ExitCodes.InvalidInput;
+        }
+
+        // Fixed here, once, for the life of the session — see WirePacketizer.ValidateMaxDatagramPayload. Note this
+        // is a whole-TRANSFER parameter, not a per-process one: peers on different budgets cannot relay repair to
+        // each other. See DatagramBudget.
+        int datagramSize = DatagramBudget.Resolve(options.DatagramSize);
+
+        if (datagramSize > WirePacketizer.DefaultMaxDatagramPayload && !options.UseTui)
+        {
+            // Not an error: an operator on a measured jumbo-frame path may want this. But a value above the
+            // 1500-MTU payload IP-fragments on ordinary Ethernet, and an IP-fragmented datagram is lost in full if
+            // any single fragment is lost — a failure mode a loopback benchmark cannot show.
+            console.MarkupLineInterpolated(
+                $"[yellow]warning:[/] --datagram-size {datagramSize} exceeds {WirePacketizer.DefaultMaxDatagramPayload}, the largest UDP payload that does not IP-fragment at a 1500-byte MTU. Use it only on a path you have measured.");
+        }
+        else if (options.DatagramSize is not null && datagramSize != WirePacketizer.DefaultMaxDatagramPayload && !options.UseTui)
+        {
+            // A non-default budget is a whole-transfer decision: a receiver left on the default still completes
+            // this transfer, but it cannot exchange repair with a peer on a different budget.
+            console.MarkupLineInterpolated(
+                $"[yellow]note:[/] --datagram-size {datagramSize} must be passed to every receiver and peer in this transfer; peers on different budgets cannot relay repair to each other.");
         }
 
         if (!File.Exists(options.FilePath))
@@ -72,7 +104,7 @@ internal static class SendRunner
         try
         {
             using var prepared = await TransferPreparation
-                .PrepareFileAsync(options.FilePath, identity.SigningKey, options.ChunkSize, cancellationToken)
+                .PrepareFileAsync(options.FilePath, identity.SigningKey, options.ChunkSize, datagramSize, cancellationToken)
                 .ConfigureAwait(false);
 
             // Multicast loopback stays on (a sender and a receiver on one box must still reach each other), so
@@ -82,7 +114,7 @@ internal static class SendRunner
             await using IMulticastTransport transport = new UdpMulticastTransport(
                 options.Group, options.Port, interfaceAddress, options.MulticastLoopback,
                 datagramFilter: DatagramFilters.Sender);
-            var session = prepared.CreateSession(transport, options.SendWindowSize);
+            var session = prepared.CreateSession(transport, options.SendWindowSize, datagramSize);
 
             if (options.UseTui)
             {
@@ -103,6 +135,13 @@ internal static class SendRunner
         {
             reporter.Line("stopped.");
             return ExitCodes.Success; // a cancelled sender is a normal, deliberate shutdown
+        }
+        catch (TransferPreparation.DatagramBudgetTooSmallException ex)
+        {
+            // A jointly-impossible (--datagram-size, --chunk-size, file size) combination. Bad input, not a runtime
+            // fault: it is caught during preparation, before any datagram is sent, and reported as such.
+            console.MarkupLineInterpolated($"[red]{ex.Message}[/]");
+            return ExitCodes.InvalidInput;
         }
         catch (Exception ex)
         {

@@ -1,4 +1,9 @@
+using Castr.Core.Chunking;
 using Castr.Core.Protocol;
+using Castr.Core.Time;
+using Castr.Core.Transport;
+using Castr.Core.Transport.InMemory;
+using Castr.Core.Trust;
 
 namespace Castr.Core.Tests.Protocol;
 
@@ -185,6 +190,51 @@ public class WirePacketizerTests
     public void Fragment_MaxDatagramTooSmall_Throws()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => WirePacketizer.Fragment(Bytes(100, 1), maxDatagramPayload: 10));
+    }
+
+    [Fact]
+    public void DefaultMaxDatagramPayload_IsTheLargestNonFragmentingPayloadAtA1500ByteMtu()
+    {
+        // 1500 MTU − 20 IPv4 header − 8 UDP header = 1472. Asserted, not assumed: a larger default would
+        // IP-fragment on ordinary Ethernet, where losing one fragment loses the whole datagram.
+        Assert.Equal(1472, WirePacketizer.DefaultMaxDatagramPayload);
+        Assert.Equal(548, WirePacketizer.MinMaxDatagramPayload);      // 576-byte IPv4 minimum MTU − 20 − 8
+        Assert.Equal(65_507, WirePacketizer.MaxMaxDatagramPayload);   // hard UDP-over-IPv4 limit
+    }
+
+    [Theory]
+    [InlineData(WirePacketizer.MinMaxDatagramPayload)]
+    [InlineData(1200)]
+    [InlineData(WirePacketizer.DefaultMaxDatagramPayload)]
+    [InlineData(WirePacketizer.MaxMaxDatagramPayload)]
+    public void ValidateMaxDatagramPayload_InRange_ReturnsTheValue(int value) =>
+        Assert.Equal(value, WirePacketizer.ValidateMaxDatagramPayload(value, "budget"));
+
+    [Theory]
+    [InlineData(WirePacketizer.MinMaxDatagramPayload - 1)]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(WirePacketizer.MaxMaxDatagramPayload + 1)]
+    [InlineData(int.MaxValue)]
+    public void ValidateMaxDatagramPayload_OutOfRange_Throws(int value) =>
+        Assert.Throws<ArgumentOutOfRangeException>(() => WirePacketizer.ValidateMaxDatagramPayload(value, "budget"));
+
+    [Theory]
+    [InlineData(WirePacketizer.MinMaxDatagramPayload - 1)]
+    [InlineData(0)]
+    [InlineData(WirePacketizer.MaxMaxDatagramPayload + 1)]
+    public void ReceiverSession_RejectsAnOutOfRangeDatagramBudget_AtConstruction(int value)
+    {
+        // The budget must be fixed and legal for the life of a session (it slices every chunk this session
+        // relays, and ChunkPacketAssembler rejects packets whose slicing metadata disagrees with the first seen),
+        // so it is range-checked once in the constructor rather than at first use.
+        var network = new InMemoryNetwork();
+        var transport = network.CreateMulticastTransport(new Endpoint("receiver", 1));
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ReceiverSession(
+            [1, 2, 3], new InMemoryTrustStore(), transport, SystemClock.Instance,
+            new ReceiverSessionOptions("/root"), (_, length) => new MemoryFileSink((int)length),
+            maxDatagramPayloadBytes: value));
     }
 
     [Fact]

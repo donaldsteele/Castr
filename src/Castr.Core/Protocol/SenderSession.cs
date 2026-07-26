@@ -108,10 +108,26 @@ public sealed class SenderSession(
         ? sendWindowSize
         : throw new ArgumentOutOfRangeException(nameof(sendWindowSize), "Send window size must be positive.");
 
+    // Captured once, range-checked once, and never re-read from the primary-constructor parameter afterwards:
+    // the datagram budget slices every chunk (ChunkPacketizer.Split), and ChunkPacketAssembler.Offer rejects a
+    // packet whose slicing metadata disagrees with the first packet seen for that chunk — so a budget that varied
+    // within a session would make the session's own repair re-sends unusable. See
+    // WirePacketizer.ValidateMaxDatagramPayload. (A primary-constructor parameter is a mutable capture field;
+    // this readonly copy is what makes the constancy an invariant rather than a convention.)
+    private readonly int _maxDatagramPayloadBytes =
+        WirePacketizer.ValidateMaxDatagramPayload(maxDatagramPayloadBytes, nameof(maxDatagramPayloadBytes));
+
     // Mirrors the receiver-side cap in RepairOptions.MaxChunksPerRequestFor, derived from the same datagram
     // budget, so a well-behaved requester's whole batch is always served in one go and only an over-large batch
     // (a buggy or hostile peer) is truncated. See HandleChunkRequestAsync for why the cap matters.
-    private readonly int _maxChunksPerRequest = RepairOptions.MaxChunksPerRequestFor(maxDatagramPayloadBytes);
+    //
+    // Derived from the VALIDATED field rather than from the raw constructor parameter. That is a no-op today
+    // (validation throws rather than clamps, so the two values cannot differ) and is written this way precisely
+    // so it stays correct if validation ever becomes clamping — the failure mode would otherwise be a silently
+    // over-large serve cap, which is the one direction that matters. A computed property rather than a field
+    // because a field initializer may not reference another instance field; the arithmetic is a subtract and a
+    // divide, on a path that runs once per inbound CHUNK_REQUEST.
+    private int MaxChunksPerRequest => RepairOptions.MaxChunksPerRequestFor(_maxDatagramPayloadBytes);
     private int _sentChunks;
     private long _sentBytes;
     private bool _carouselComplete;
@@ -151,7 +167,7 @@ public sealed class SenderSession(
     /// <summary>Encodes a wire message and sends it as one or more MTU-safe datagrams (see <see cref="WirePacketizer"/>).</summary>
     private async Task SendMessageAsync(object message, CancellationToken ct)
     {
-        foreach (var datagram in WirePacketizer.Fragment(MessageCodec.Encode(message), maxDatagramPayloadBytes))
+        foreach (var datagram in WirePacketizer.Fragment(MessageCodec.Encode(message), _maxDatagramPayloadBytes))
             await transport.SendAsync(datagram, ct).ConfigureAwait(false);
     }
 
@@ -253,9 +269,10 @@ public sealed class SenderSession(
         // the requester's own repair timer will re-ask for whatever is still missing, so nothing is lost — and
         // dispatching the overflow onto a background task instead was deliberately NOT done here, since it adds
         // real concurrency risk for a case the cap already makes rare.
-        var servedIndices = request.ChunkIndices.Length <= _maxChunksPerRequest
+        int maxChunksPerRequest = MaxChunksPerRequest;
+        var servedIndices = request.ChunkIndices.Length <= maxChunksPerRequest
             ? request.ChunkIndices
-            : request.ChunkIndices[.._maxChunksPerRequest];
+            : request.ChunkIndices[..maxChunksPerRequest];
 
         // Same windowed-concurrency rationale as RunChunkCarouselAsync: this benefits from the same pipelining
         // rather than one sequential await per requested chunk. This is independently windowed from the carousel
@@ -307,10 +324,10 @@ public sealed class SenderSession(
         // A chunk whose whole envelope fits in one datagram goes as a single ChunkDataMessage/ChunkResponseMessage
         // (unchanged wire behavior). A larger chunk is split into identity-keyed ChunkPacketMessage wire packets
         // (see ChunkPacketizer) so it stays MTU-safe and accumulates across repair rounds.
-        if (ChunkPacketizer.RequiresPacketization(ciphertext.Length, proof, maxDatagramPayloadBytes))
+        if (ChunkPacketizer.RequiresPacketization(ciphertext.Length, proof, _maxDatagramPayloadBytes))
         {
             foreach (var packet in ChunkPacketizer.Split(
-                signedManifest.Manifest.SessionId, fileIndex, chunkIndex, ciphertext, proof, maxDatagramPayloadBytes))
+                signedManifest.Manifest.SessionId, fileIndex, chunkIndex, ciphertext, proof, _maxDatagramPayloadBytes))
             {
                 await SendMessageAsync(packet, ct).ConfigureAwait(false);
             }
