@@ -1146,3 +1146,245 @@ an environmental cap is exactly the kind of thing this log exists to stop us fro
 **The inline bubble is still worth tracking — as a future constraint, not a current cause.** It is roughly
 300–500 µs per chunk, about a 4% duty cycle at today's rates, and it becomes binding as per-datagram cost
 falls. Not a contributor to this cap, and not something to "fix" on the strength of this measurement.
+
+---
+
+## 2026-07-25 — M10: bounding `ReceiverSession._chunkCache` (memory, not throughput)
+
+**This is a memory measurement, not a throughput one.** The headline quantity is peak retained
+receiver memory over a large transfer; the throughput A/B exists only to show the change does not
+cost anything, and it is reported as "no measurable effect", not as a win.
+
+### The defect
+
+`ReceiverSession._chunkCache` retained every verified chunk's ciphertext plus its `MerkleProof` for
+the entire transfer, with **no eviction of any kind** (grep confirmed no `Remove` anywhere). Retained
+memory was therefore a linear function of *transfer size*, all of it on the large object heap at the
+256 KiB default chunk size. That is a hard wall — an `OutOfMemoryException` that terminates the
+process — not a rate limit.
+
+### The change
+
+Ciphertext moves into a byte-bounded LRU (`ReceiverSessionOptions.ChunkCacheBytes`, default 32 MiB).
+Merkle proofs are **retained**, because a receiver holds only the signed root and cannot rebuild a
+proof mid-transfer (see "what did not work" below). A peer requesting an evicted chunk is served from
+a cold path: read the plaintext back off the destination sink and re-encrypt it, which is
+byte-identical because `ContentKey.EncryptChunk` is deterministic.
+
+### Environment — read this before comparing to any other row in this file
+
+| | |
+|---|---|
+| Host | Windows 11 Pro 26200, 12 logical cores, **12.7 GB RAM** (2.6 GB free at start) |
+| Group | `239.192.55.55` (the shipped default) |
+| **Interface** | **`Loopback Pseudo-Interface 1` (127.0.0.1), forced with `--interface` on *both* processes, on *every* run** |
+| Binaries | Release `dotnet publish` of `Castr.Cli`. "before" = a clean `git worktree` at `ff490e9`; "after" = the same tree plus this change. Same identity key and trust store for both. |
+| Options | All defaults: `--chunk-size 262144`, `--datagram-size 1472`, `--send-window-size 1` |
+| Method | Real two-process `castr send` / `castr receive`, real UDP socket, real crypto, real disk |
+
+Two environment notes that correct the standing guidance:
+
+1. **The roadmap's "the reboot cleared the leaked loopback memberships" is stale.**
+   `netsh interface ipv4 show joins` during these runs shows `239.192.55.55` present on **both**
+   `Loopback Pseudo-Interface 1` (`References = 0` — leaked again) and `Ethernet`. The interface was
+   forced on every run, so the path here is loopback by construction rather than by luck, but the
+   default group is once again ambiguous on this host.
+2. **No ProtonVPN adapter was up.** `Get-NetIPAddress` listed only Bluetooth, two `Local Area
+   Connection*` adapters, Ethernet, Wi-Fi and loopback. The auto-selection ambiguity warned about for
+   this session did not apply to these runs — the interface was forced regardless.
+
+**All absolute MB/s below are loopback numbers and do not describe a LAN.**
+
+### Headline — peak retained receiver memory, 2 GiB single-file transfer
+
+Receiver process sampled every 200 ms for peak private bytes / working set (n=1 per arm), plus a
+second, separate run per arm with `dotnet-counters` attached to the receiver for the runtime series.
+Both arms verified **byte-identical** by SHA-256 on every run.
+
+All figures below are the **post-review re-measurement**, taken after the serve path was moved onto its
+own worker task (see the next section). The pre-review set agreed within 4% on every row.
+
+| Metric (receiver process) | before `ff490e9` | after | ratio |
+|---|---|---|---|
+| **Peak private bytes** | **2,461.7 MB** | **93.3 MB** | **26.4x** |
+| Peak working set (200 ms sampling) | 2,484.4 MB | 127.0 MB | 19.6x |
+| Peak working set (`dotnet-counters`) | 2,601.8 MB | 129.3 MB | 20.1x |
+| **Peak LOH size** | **2,512.2 MB** | **67.0 MB** | **37.5x** |
+| Peak GC committed | 2,532.8 MB | 81.4 MB | 31.1x |
+| Peak LOH fragmentation | 466.8 MB | 30.0 MB | 15.6x |
+| Total bytes allocated | 9.75 GB | 9.66 GB | flat — *the change retains less, it does not allocate less* |
+
+### The wall itself: the growth term went from the payload to ~170x smaller
+
+| Transfer | before — peak private | after — peak private |
+|---|---|---|
+| 100 MiB (mean of 6 warm reps) | 166.0 MB | 91.9 MB |
+| 256 MiB | 385.3 MB | 88.3 MB |
+| 2 GiB | 2,367.9 MB | 91.7 MB |
+
+The "before" column fits `~62 MB base + payload + LOH fragmentation`. The "after" column is flat at
+~90 MB across a **21× range of transfer size** — but **"flat" is a statement about the measured range,
+not an asymptotic claim, and it should not be repeated as one.** `_chunkProofs` is retained for the
+whole session with no eviction, so **peak memory is still linear in transfer size**; the constant is
+just ~170× smaller. What changed is which term dominates, not that the growth term is gone.
+
+Sizing the residual honestly. A proof is `10 + 33·log₂(chunkCount)` bytes on the wire and ~1 KB of
+object graph in memory, and **chunk count is what `--chunk-size` controls**, so the residual is a
+property of the *default configuration* rather than an absolute limit:
+
+| Transfer | proofs retained @ 256 KiB chunks (default) | @ 16 MiB chunks (`--chunk-size` max) |
+|---|---|---|
+| 2 GiB | ~8 MB (inside the noise of the ~90 MB above) | ~0.06 MB |
+| 5 GB | ~20 MB | ~0.3 MB |
+| 100 GB | **~260 MB** | **~2.8 MB** |
+
+**Revisit trigger, so this deferral is auditable rather than open-ended: above ~20 GB per transfer at
+the default chunk size.** Below that the residual stays under ~50 MB and is not worth a data-structure
+change on a verified path.
+
+**Preferred fix when it is needed — a proof sidecar, not the incremental tree.** Write proofs to a
+sidecar file beside the `.part` file and read them back on the cold path, which already does a disk
+read; making it two fully bounds receiver memory with no new in-memory data structure and none of the
+review cost of reconstructing the Merkle tree incrementally. ~8 MB of sidecar at 2 GiB. The
+incremental-tree approach below remains the option that would additionally let proofs be *regenerated*,
+but it is strictly more work for the same memory outcome.
+
+Extrapolating the "before" fit, the roadmap's estimate of ~7 GB retained for a 60 s transfer at
+115 MB/s is consistent. On this 12.7 GB host, "before" would not survive a transfer much past 5 GB.
+
+### The cold rebuild must not run on the receive path — measured, and it is an M7 regression risk
+
+Review measured the cold path directly on a real `FileSystemFileSink` at 256 KiB chunks:
+
+| | per chunk | one max-size (336-index) request |
+|---|---|---|
+| warm cache hit | 0.003–0.28 ms | ~1 ms |
+| **cold: read + ChaCha20 + BLAKE3** | **0.78–0.86 ms** | **~263 ms** |
+| cold, read is a real seek (transfer > RAM) | 5–10 ms | **1.7–3.4 s** |
+
+`HandleChunkRequest` authenticates nothing but the session ID, so that is work commandable by **one
+unauthenticated datagram** — a ~260× amplification. The reason it matters beyond latency: **the cold
+figure exceeds `CarouselIdleThreshold` (1000 ms)**, no watermark can advance while the receive path is
+blocked, and a false idle is exactly what restores the full M7 repair storm. This change could
+therefore have reached back and undone M7's guarantee.
+
+The serve path is now split: **plan under `_stateGate` (no I/O, no crypto), execute on a dedicated
+worker task** fed by a bounded `DropWrite` channel. A first attempt that merely moved the work *after*
+the gate release — still on `RunAsync`'s own loop — was **caught by its own regression test** and is
+worth recording: it frees repair passes but leaves packet processing, and therefore watermark
+advancement, stalled behind the disk read. Half the defect looks like all of it. Only a separate task
+removes the class.
+
+### Gen2 collections went UP — 18 to 154 — and that is the correct outcome
+
+The roadmap's P6 entry predicted the unbounded cache was "guaranteeing gen2 GC pauses *during* the
+transfer" and implied bounding it would reduce them. **The prediction is refuted, and recording the
+refutation matters more than the number.**
+
+| Counter, whole 2 GiB transfer | before | after |
+|---|---|---|
+| gen0 collections | 671 | 642 |
+| gen1 collections | 19 | 43 |
+| **gen2 collections** | **17** | **154** |
+| **Total GC pause time** | **0.277 s** | **0.350 s** |
+| **Max pause in any 1 s window** | **6.2 ms** | **7.0 ms** |
+
+**Never quote the 17 → 154 without the two pause rows next to it.** On its own it reads as a 9×
+regression; with them it reads as what it is — more collections that each actually reclaim, at
+unchanged total cost.
+
+The mechanism: when nothing is ever released, an LOH/gen2 collection reclaims nothing, so the GC
+scales its budget up and collects rarely — the heap simply grows. Once eviction makes those buffers
+genuinely garbage, the LOH allocation budget starts triggering collections that actually *reclaim*.
+More collections, each cheap. **Total pause time is flat within noise (0.277 s vs 0.350 s over an
+~85 s transfer, ~0.4% of wall clock either way), and no single 1 s window exceeded 7 ms of pause in
+either arm.** This confirms the campaign's earlier finding that GC is not a throughput factor here —
+in both directions. Reading "gen2 collections up 9x" as a regression is reading the wrong counter;
+the one that would matter is pause time, and it did not move.
+
+### No throughput regression — 100 MiB, warm, interleaved, n=6 per arm, run twice
+
+One warm-up rep per arm discarded; arms alternated *within* each rep, per METHODOLOGY rule 1. The
+whole set was run twice: once before the serve path moved to a worker task, once after.
+
+| Set | Arm | n | mean | median | min | max | byte-identical |
+|---|---|---|---|---|---|---|---|
+| pre-restructure | before `ff490e9` | 6 | 23.06 MB/s | 23.13 | 21.81 | 24.28 | 6/6 |
+| pre-restructure | after | 6 | 22.78 MB/s | 23.05 | 20.94 | 24.36 | 6/6 |
+| **post-restructure** | before `ff490e9` | 6 | **24.27 MB/s** | 24.38 | 21.82 | 26.06 | 6/6 |
+| **post-restructure** | after | 6 | **25.11 MB/s** | 25.78 | 22.95 | 25.94 | 6/6 |
+
+**The two sets order the arms oppositely — −1.2% then +3.5% on the mean — which is the cleanest
+available statement that the effect is below this rig's noise floor.** Neither delta approaches the
+2.5–4.2 MB/s spread within a single arm. Read this as "no measurable effect", in either direction;
+in particular do **not** read the post-restructure set as evidence that the change made anything
+faster.
+
+**Baseline sanity check** (the M7 lesson — a run set is internally valid and still says nothing about
+whether the host is sane): the unfixed arm measured 23.06 MB/s against this file's recorded warm
+loopback baseline of ~24 MB/s at 100 MiB on the same configuration. Within 4%. The host was sane.
+
+**The 2 GiB runs are NOT a throughput claim and must not be read as one.** They are n=1 and not
+interleaved, and across four such pairs the wall-clock ordering was inconsistent (112.8 vs 136.1 s;
+142.6 vs 120.2 s; 81.0 vs 76.2 s; 88.8 vs 83.3 s). Measurements that disagree on the sign of the
+effect are measuring the environment, not the change. The 100 MiB interleaved sets above are the
+throughput result.
+
+### Docker netem E2E tier — green, and it genuinely exercised the cold path
+
+3/3 passing, tests unmodified, image rebuilt from the changed code (verified: the container's `castr`
+binary contains the new `ChunkCacheBytes` symbol). The 5-receiver real-`tc netem` loss test carries a
+**64 MB payload against the 32 MiB default cache**, so roughly half of every receiver's chunks were
+evicted at any moment and peer-served repair under real kernel loss had to go through the
+read-back-and-re-encrypt path to answer. That is the behaviour most at risk from this change, and it
+held.
+
+**Environment trap, now fixed in the fixture: `CastrClusterFixture.PublishCli()` deadlocked whenever a
+persistent MSBuild node was alive.** It ran `dotnet publish` with both streams redirected and then
+called `StandardOutput.ReadToEnd()` before `WaitForExit()`. With `nodeReuse:true` (the default), the
+long-lived MSBuild node processes left behind by any earlier `dotnet build` / `dotnet test` **inherit
+the redirected pipe handles**, so the pipe never reaches EOF and `ReadToEnd()` blocks forever — even
+though `dotnet publish` itself has already exited and written its output to disk. Symptom: a run that
+sits for tens of minutes with zero Docker activity, which is easy to misattribute to the documented
+Testcontainers/npipe hang, and which cost ~50 minutes here before a `dotnet-stack` dump showed the
+managed stack parked in `CastrClusterFixture.PublishCli()` rather than in any Docker client code.
+
+**Fixed** — the fixture now drains both streams with `BeginOutputReadLine`/`BeginErrorReadLine` and
+waits on process exit with a 15-minute timeout, so an inherited handle holding the pipe open no longer
+matters. `MSBUILDDISABLENODEREUSE=1` was the workaround before the fix and is no longer required.
+
+The transferable lesson: **two different hangs on this tier produce the same symptom** — tens of
+minutes with zero Docker activity — and the documented one (Testcontainers/npipe) is the wrong first
+guess. Take a managed stack (`dotnet-stack report -p <testhost-pid>`) before diagnosing.
+
+### What did not work: the receiver cannot regenerate a Merkle proof
+
+Regenerating the proof on the cold path alongside the ciphertext **cannot be done, and the reason is
+structural rather than an implementation gap.** `MerkleTree.GetProof` needs the file's entire
+leaf-hash set to produce the sibling chain; `SenderSession` can do it because it holds the whole
+`MerkleTree` per file. A receiver holds only the signed *root* from the manifest. Mid-transfer —
+precisely when repair matters — it has not seen the leaves it would need, and a chunk it has never
+received contributes a leaf hash it cannot compute.
+
+So proofs are **retained** and only ciphertext is evicted. That is the better design anyway: a proof
+is `10 + 33·log₂(chunkCount)` bytes on the wire (~1 KB of object graph in practice) against 256 KiB of
+ciphertext, so evicting the large term is where all the memory is.
+
+The residual it leaves — O(chunks), still linear in transfer size — is sized, given a revisit trigger,
+and given a preferred fix in "the wall itself" above. Note that reconstructing the Merkle tree
+incrementally from arriving proofs (every proof contributes known interior nodes, so the whole tree is
+recoverable well before the file is) would additionally make proofs *regenerable*, closing the gap this
+section opens — but it is strictly more work than the sidecar for the same memory outcome, so the
+sidecar is the recommendation.
+
+### Reproduction
+
+```powershell
+# both arms, same command shape; only the bin directory differs
+castr receive --dest-dir <dest> -g 239.192.55.55 -p 45055 -i "Loopback Pseudo-Interface 1"
+castr send <file>              -g 239.192.55.55 -p 45055 -i "Loopback Pseudo-Interface 1"
+```
+
+Peak private bytes / working set sampled from `Get-Process` every 200 ms against the receiver PID;
+runtime counters via `dotnet-counters collect -p <recv-pid> --counters System.Runtime` (installed as
+a global tool for this session and removed afterwards).
