@@ -52,15 +52,41 @@ public sealed class FileSessionRegistry : ISessionRegistry
 
     public IReadOnlyList<SessionBinding> All() => _inner.All();
 
+    /// <summary>
+    /// Writes the registry out, and <b>never lets a persistence failure fail the transfer that triggered it</b>.
+    ///
+    /// <para>Two independent processes can share this file: the path is derived from the <i>directory</i> of
+    /// the trust store, so two receivers pointed at two trust stores in one config directory land on one
+    /// registry. That is normal for several receivers on one host — the M12a fan-out harness, the showcase
+    /// captures, anyone running two <c>castr receive</c> processes side by side.</para>
+    ///
+    /// <para>The temp file therefore carries the process id and a random component. A fixed <c>.tmp</c> name
+    /// meant concurrent receivers collided on it, <see cref="File.WriteAllText(string,string)"/> threw
+    /// <see cref="IOException"/> out of <see cref="Record"/>, and the throw unwound manifest admission —
+    /// so a receiver that had already verified a good manifest silently sat at 0/0 chunks forever. Measured:
+    /// exactly two of three same-host receivers completed a transfer, repeatably, and the losers logged
+    /// nothing at all.</para>
+    ///
+    /// <para>Losing the race is also tolerated rather than thrown. This file is a memory of session ids
+    /// already seen; a dropped write costs one binding's worth of enforcement, while a throw costs the whole
+    /// transfer. That is the same trade the class already makes for an unreadable file on load.</para>
+    /// </summary>
     private void Save()
     {
         var directory = Path.GetDirectoryName(Path.GetFullPath(_path));
         if (!string.IsNullOrEmpty(directory))
             Directory.CreateDirectory(directory);
 
-        var tempPath = _path + ".tmp";
-        File.WriteAllText(tempPath, SessionRegistryJsonCodec.Encode(_inner.All()));
-        File.Move(tempPath, _path, overwrite: true);
+        var tempPath = $"{_path}.{Environment.ProcessId}.{Path.GetRandomFileName()}.tmp";
+        try
+        {
+            File.WriteAllText(tempPath, SessionRegistryJsonCodec.Encode(_inner.All()));
+            File.Move(tempPath, _path, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            try { File.Delete(tempPath); } catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) { }
+        }
     }
 }
 

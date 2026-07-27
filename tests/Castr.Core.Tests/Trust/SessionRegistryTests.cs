@@ -171,6 +171,72 @@ public class SessionRegistryTests
         }
     }
 
+    [Fact]
+    public async Task FileRegistry_ConcurrentWritersToOneFile_DoNotThrow()
+    {
+        // Found by M12a's fan-out harness, not by review. The registry path is derived from the trust store's
+        // DIRECTORY, so several receivers on one host share one file; the old fixed "<path>.tmp" temp name made
+        // them collide, File.WriteAllText threw IOException straight out of Record, and that unwound manifest
+        // admission — the receiver sat at 0/0 chunks with nothing logged. Exactly two of three same-host
+        // receivers completed, repeatably.
+        var directory = Path.Combine(Path.GetTempPath(), "castr-session-registry-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(directory);
+            var path = Path.Combine(directory, "seen-sessions.json");
+            var senderId = PublicKeyId.FromRawEd25519(new byte[32]);
+            var digest = ChunkHash.Compute([7]);
+
+            // Separate instances, as separate processes would be — each with its own in-memory state and its
+            // own view of the file.
+            var writers = Enumerable.Range(0, 8).Select(writer => Task.Run(() =>
+            {
+                var registry = new FileSessionRegistry(path);
+                for (int i = 0; i < 40; i++)
+                    registry.Record(SessionId((byte)(writer * 40 + i)), senderId, digest, DateTimeOffset.UnixEpoch);
+            })).ToArray();
+
+            await Task.WhenAll(writers); // the assertion: no writer faults
+
+            // And the file that survives the race is still a readable registry, not a truncated one.
+            Assert.NotEmpty(new FileSessionRegistry(path).All());
+            Assert.Empty(Directory.GetFiles(directory, "*.tmp")); // no temp files left behind
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void FileRegistry_WhenTheFileCannotBeReplaced_RecordsInMemoryRatherThanThrowing()
+    {
+        // A persistence failure must degrade enforcement, never fail the transfer: this file is a memory of
+        // session ids already seen, and Record runs inside manifest admission on the receive path.
+        var directory = Path.Combine(Path.GetTempPath(), "castr-session-registry-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(directory);
+            var path = Path.Combine(directory, "seen-sessions.json");
+            var senderId = PublicKeyId.FromRawEd25519(new byte[32]);
+            var digest = ChunkHash.Compute([7]);
+            var registry = new FileSessionRegistry(path);
+
+            using (File.Open(path, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
+            {
+                registry.Record(SessionId(0x51), senderId, digest, DateTimeOffset.UnixEpoch);
+            }
+
+            Assert.Equal(SessionAdmission.SameTransfer, registry.Classify(SessionId(0x51), senderId, digest));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
     // ---- harness ----
 
     private static Task<ManifestAdmissionResult> EvaluateAsync(
