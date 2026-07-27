@@ -13,8 +13,11 @@ namespace Castr.Core.Protocol;
 /// <item>only completes when all <c>PacketCount</c> distinct indices are present — a partially-arrived chunk
 /// is never surfaced as data, so it stays "not yet received" and the existing chunk-level repair re-requests
 /// the whole chunk;</item>
-/// <item>bounds memory with an LRU cap on concurrent in-flight groups, evicting the oldest partial group when
-/// the cap is reached (its chunk, still incomplete, is later re-requested by repair).</item>
+/// <item>bounds memory with a cap on concurrent in-flight groups, evicting the group established longest ago
+/// when the cap is reached (its chunk, still incomplete, is later re-requested by repair). <b>FIFO by
+/// establishment, not LRU</b> — this said "LRU" until M11 while <c>EstablishedAt</c> was assigned once in the
+/// constructor and never touched on access, so no arrival has ever promoted a group. The behaviour is correct
+/// either way; only the name was wrong, and a wrong name is what someone reasons from next time.</item>
 /// </list>
 /// Not thread-safe: each session owns one instance and drives it from its single receive loop.
 /// </summary>
@@ -26,7 +29,7 @@ public sealed class PacketReassembler
     /// tighter bound from, so it is a fixed ceiling: generous enough for a legitimate large control message (e.g.
     /// a Manifest describing many files, or a whole chunk sent un-packetized under a large datagram budget), yet
     /// far below what would let a single crafted packet claim gigabytes. Kept consistent with the codebase's
-    /// established 16 MiB memory-safety ceiling (Castr.Cli.CastrPaths.MaxChunkSize).
+    /// established 16 MiB memory-safety ceiling (<see cref="Manifest.ManifestLimits.MaxChunkSize"/>).
     /// </summary>
     public const int DefaultMaxMessageLength = 16 * 1024 * 1024;
 
@@ -110,18 +113,19 @@ public sealed class PacketReassembler
         return partial.TryAssemble(); // null only if lengths don't add up (corruption)
     }
 
+    /// <summary>Caps concurrent groups: when full, drop the one established longest ago. See the FIFO note on the class.</summary>
     private void EvictOldestIfFull()
     {
         if (_partials.Count < _maxConcurrentGroups)
             return;
 
         long oldestKey = 0;
-        long oldestSequence = long.MaxValue;
+        long oldestEstablishedAt = long.MaxValue;
         foreach (var (key, value) in _partials)
         {
-            if (value.Sequence < oldestSequence)
+            if (value.EstablishedAt < oldestEstablishedAt)
             {
-                oldestSequence = value.Sequence;
+                oldestEstablishedAt = value.EstablishedAt;
                 oldestKey = key;
             }
         }
@@ -133,17 +137,18 @@ public sealed class PacketReassembler
         private readonly byte[]?[] _fragments;
         private int _received;
 
-        public Partial(int packetCount, int totalLength, long sequence)
+        public Partial(int packetCount, int totalLength, long establishedAt)
         {
             PacketCount = packetCount;
             TotalLength = totalLength;
-            Sequence = sequence;
+            EstablishedAt = establishedAt;
             _fragments = new byte[packetCount][];
         }
 
         public int PacketCount { get; }
         public int TotalLength { get; }
-        public long Sequence { get; }
+        /// <summary>Monotonic order in which this group's buffer was created. Never updated on access — see the FIFO note on the class.</summary>
+        public long EstablishedAt { get; }
         public bool IsComplete => _received == PacketCount;
 
         public bool Add(int index, byte[] fragment)

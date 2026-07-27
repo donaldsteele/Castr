@@ -69,7 +69,7 @@ public sealed class ChunkPacketAssembler
     private readonly int _maxPendingChunks;
     private readonly int _minFragmentBytes;
     private readonly Dictionary<(int File, int Chunk), Partial> _partials = [];
-    private long _sequence;
+    private long _established;
 
     /// <summary>
     /// Bounds every attacker-controlled sizing field before it is used to allocate:
@@ -157,7 +157,7 @@ public sealed class ChunkPacketAssembler
         if (!_partials.TryGetValue(key, out var partial))
         {
             EvictOldestIfFull();
-            partial = new Partial(packet.CiphertextLength, ++_sequence);
+            partial = new Partial(packet.CiphertextLength, ++_established);
             _partials[key] = partial;
         }
         else if (partial.CiphertextLength != packet.CiphertextLength)
@@ -174,7 +174,7 @@ public sealed class ChunkPacketAssembler
             // matters: a chunk is always completable by *some* source re-sending it in full, which is exactly
             // what chunk-level repair does.
             _partials.Remove(key);
-            partial = new Partial(packet.CiphertextLength, ++_sequence);
+            partial = new Partial(packet.CiphertextLength, ++_established);
             _partials[key] = partial;
         }
 
@@ -207,12 +207,12 @@ public sealed class ChunkPacketAssembler
             return;
 
         (int File, int Chunk) oldestKey = default;
-        long oldestSequence = long.MaxValue;
+        long oldestEstablishedAt = long.MaxValue;
         foreach (var (key, value) in _partials)
         {
-            if (value.Sequence < oldestSequence)
+            if (value.EstablishedAt < oldestEstablishedAt)
             {
-                oldestSequence = value.Sequence;
+                oldestEstablishedAt = value.EstablishedAt;
                 oldestKey = key;
             }
         }
@@ -234,14 +234,15 @@ public sealed class ChunkPacketAssembler
         private readonly byte[] _buffer;
         private MerkleProof? _proof;
 
-        public Partial(int ciphertextLength, long sequence)
+        public Partial(int ciphertextLength, long establishedAt)
         {
             _buffer = new byte[ciphertextLength];
-            Sequence = sequence;
+            EstablishedAt = establishedAt;
         }
 
         public int CiphertextLength => _buffer.Length;
-        public long Sequence { get; }
+        /// <summary>Monotonic order in which this buffer was created. Never updated on access — the eviction policy is FIFO by establishment.</summary>
+        public long EstablishedAt { get; }
 
         /// <summary>Disjoint covered ranges. Exposed for the resource-bound tests, which assert on fragmentation.</summary>
         public int CoverageRangeCount => _covered.Count;

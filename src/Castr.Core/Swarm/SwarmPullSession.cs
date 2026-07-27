@@ -84,7 +84,7 @@ public sealed class SwarmPullSession : IDisposable
 
     // ---- Held chunk ciphertext (see DefaultChunkCacheBytes) ----
     //
-    // Byte-bounded and evicted least-recently-used, on M10's shape. Two deliberate differences from
+    // Byte-bounded, on M10's shape. Two deliberate differences from
     // ReceiverSession's cache, both of which follow from this class not being an ISwarmContentSource:
     //
     //   * No proof retention. ReceiverSession keeps every chunk's MerkleProof for the life of the session
@@ -95,10 +95,13 @@ public sealed class SwarmPullSession : IDisposable
     //     sink. The only reader here is the decrypt-and-write path, which by definition runs on chunks that
     //     have no plaintext on disk yet, so there would be nothing to read back.
     //
-    // _lru is most-recently-used first; each dictionary value is that chunk's node in it, so a hit is O(1) to
-    // promote. All of it is touched only under _pullGate, like every other field below.
+    // _order is newest-first and each dictionary value is that chunk's node in it. Deliberately FIFO by
+    // admission and NOT least-recently-used, despite the shape: nothing here reads a held chunk except the
+    // decrypt path, which drops it immediately afterwards, so there is no access to promote on and calling it an
+    // LRU would be the same wrong-name defect M11 corrected in PacketReassembler. All of it is touched only
+    // under _pullGate, like every other field below.
     private readonly Dictionary<(int File, int Chunk), LinkedListNode<HeldChunk>> _heldCiphertext = [];
-    private readonly LinkedList<HeldChunk> _lru = new();
+    private readonly LinkedList<HeldChunk> _order = new();
     private readonly long _chunkCacheBytes;
     private long _heldBytes;
 
@@ -336,7 +339,7 @@ public sealed class SwarmPullSession : IDisposable
         await _sinks[fileIndex].WriteAsync(range.Offset, plaintext, ct).ConfigureAwait(false);
         // The plaintext is on disk now. Nothing in this class ever reads the ciphertext again — unlike
         // ReceiverSession, this session serves no peers — so release it immediately rather than letting it age
-        // out of the LRU and crowd out chunks that still need it.
+        // out of the eviction queue and crowd out chunks that still need it.
         _pendingDecrypt.Remove(key);
         Drop(node);
 
@@ -366,13 +369,13 @@ public sealed class SwarmPullSession : IDisposable
         if (_heldCiphertext.ContainsKey(key))
             return; // already held (this path is reached once per chunk, but stay idempotent)
 
-        _heldCiphertext[key] = _lru.AddFirst(new HeldChunk(key, ciphertext));
+        _heldCiphertext[key] = _order.AddFirst(new HeldChunk(key, ciphertext));
         _heldBytes += ciphertext.Length;
         EvictDownToBudget();
     }
 
     /// <summary>
-    /// Drops least-recently-used ciphertext until the budget is met.
+    /// Drops the longest-held ciphertext until the budget is met.
     ///
     /// <para><b>Why this evicts undecrypted chunks where <c>ReceiverSession</c> pins them.</b> On the multicast
     /// side a chunk verified before the KEY_GRANT lands is pinned, because that window is a short startup
@@ -394,8 +397,8 @@ public sealed class SwarmPullSession : IDisposable
     {
         // Everything resident is by construction still undecrypted: a chunk's ciphertext is released the moment
         // its plaintext reaches the sink, so there is no cheap tier to evict first.
-        var node = _lru.Last;
-        while (node is not null && _heldBytes > _chunkCacheBytes && _lru.Count > 1)
+        var node = _order.Last;
+        while (node is not null && _heldBytes > _chunkCacheBytes && _order.Count > 1)
         {
             var previous = node.Previous;
             ReturnToMissing(node.Value.Key);
@@ -406,7 +409,7 @@ public sealed class SwarmPullSession : IDisposable
 
     private void Drop(LinkedListNode<HeldChunk> node)
     {
-        _lru.Remove(node);
+        _order.Remove(node);
         _heldCiphertext.Remove(node.Value.Key);
         _heldBytes -= node.Value.Ciphertext.Length;
     }
