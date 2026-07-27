@@ -118,27 +118,42 @@ internal static class CastrFanOut
                 .Build();
         }
 
-        // Induce real kernel-level loss on the sender's egress, targeting only large (chunk-carrying) datagrams
-        // while sparing small control traffic. Since M3, Castr.Core packetizes every chunk whose encrypted
-        // envelope exceeds the wire-packet budget into MTU-safe wire packets (default 1200-byte payload =>
-        // ~1228-byte IP datagrams), so chunk traffic is NO LONGER IP-fragmented and the old "match the first IP
-        // fragment" filter would match nothing. This is true even for the CLI's 8 KB default chunk: at the
-        // default 1200-byte budget an 8 KB chunk's ~8208-byte ciphertext does not fit one datagram, so it ships
-        // as ~8 ChunkPacket datagrams of <=1200 bytes each (M3 QA verified this over real loopback UDP: the
-        // largest datagram observed was exactly 1200 bytes; see the QA report). We match on the IP total-length
-        // field (offset 2): 0x0400/0xfc00 selects lengths in [1024, 2047], which covers the MTU-sized chunk
-        // packets but leaves the much smaller ANNOUNCE/MANIFEST/KEY_GRANT/CHUNK_REQUEST/PEER_HAVE control
-        // datagrams (< 1024 bytes) untouched. Sparing control matters because the manifest is broadcast exactly
-        // once with no re-request path — losing it would stall rather than exercise repair.
-        // NOTE (M3 QA): this filter change has not been run against Docker in-loop; verify netem still drops
-        // chunk datagrams (result.NetemDroppedPackets > 0) on a machine with the E2E tier enabled. If a run ever
-        // observes chunk-sized *IP fragments* (total length ~1500) rather than <=1228-byte wire packets, the
-        // baked container image is a STALE pre-packetization build — rebuild it (the fixture caches the image
-        // and reuses a temp publish dir), as current Castr.Core no longer IP-fragments chunk traffic.
+        // Induce real kernel-level loss on the sender's egress, targeting the data-carrying message types while
+        // sparing control traffic. Sparing control matters because the manifest is broadcast exactly once with
+        // no re-request path — losing it would stall the transfer rather than exercise repair.
+        //
+        // Selected by Castr MESSAGE TYPE, not by datagram size (M11). The size filter this replaced —
+        // `match u16 0x0400 0xfc00 at 2`, i.e. IP total length in [1024, 2047] — was written against a
+        // 1200-byte datagram budget and 8 KiB chunks, and both of those defaults have since moved (1472 and
+        // 256 KiB). Two things were wrong with it by the time this was revisited:
+        //
+        //   * It spared every datagram under 1024 bytes, which is control traffic by design but also the SHORT
+        //     TAIL PACKET each chunk ends with — 228 payload bytes at the shipped 256 KiB/1472 pair. One packet
+        //     in every 184 was therefore undroppable, so the loss the receivers actually saw was neither the
+        //     configured rate nor uniform across a chunk.
+        //   * It dropped any large control datagram, including the PacketFragment slices a big manifest travels
+        //     as — the exact traffic the comment claimed to be protecting. Invisible only because this fixture's
+        //     manifests describe one small file.
+        //
+        // A Castr datagram is [FormatVersion:1][MessageType:1][body], so the type tag sits at a fixed offset:
+        // 20 (IP header, no options on a container veth) + 8 (UDP) + 1 = 29. Types 3 (CHUNK_DATA), 6
+        // (CHUNK_RESPONSE) and 11 (CHUNK_PACKET) are the sender's payload-bearing messages; CHUNK_RESPONSE is
+        // included deliberately so repair traffic is lossy too, which is what makes convergence a real result
+        // rather than a first-try success. Everything else — ANNOUNCE, MANIFEST, PEER_HAVE, CHUNK_REQUEST,
+        // JOIN_REQUEST, KEY_GRANT, PACKET_FRAGMENT — passes untouched at any size.
+        //
+        // Verified in-loop against Docker when it landed (the previous filter carried an M3-era note saying it
+        // never had been): all three fan-out arms green with NetemDroppedPackets > 0 and every receiver's hash
+        // byte-identical.
+        int[] dataMessageTypes = [3, 6, 11]; // CHUNK_DATA, CHUNK_RESPONSE, CHUNK_PACKET
+        var typeFilters = string.Join(" && ", dataMessageTypes.Select(type =>
+            "tc filter add dev eth0 parent 1:0 protocol ip u32 " +
+            $"match ip protocol 17 0xff match u8 {type} 0xff at 29 flowid 1:3"));
+
         var script =
             "tc qdisc add dev eth0 root handle 1: prio && " +
             $"tc qdisc add dev eth0 parent 1:3 handle 30: netem loss {lossPercent}% && " +
-            "tc filter add dev eth0 parent 1:0 protocol ip u32 match u16 0x0400 0xfc00 at 2 flowid 1:3 && " +
+            typeFilters + " && " +
             "exec /opt/castr/castr send /data/payload.bin --identity /data/identity.key " +
             $"--group {group} --port {port} --interface eth0";
 
