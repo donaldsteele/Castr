@@ -77,7 +77,7 @@ public sealed class TransferDashboard
         var sampler = new ThroughputSampler();
         TransferProgress? latest = null;
         double rate = 0;
-        var wake = new SemaphoreSlim(0);
+        using var wake = new RenderSignal();
         DateTime? sessionCompleteObservedAt = null;
 
         void Handler(TransferProgress progress)
@@ -85,7 +85,7 @@ public sealed class TransferDashboard
             // Progress events may arrive on the session's threads; capture the newest snapshot and wake the loop.
             Volatile.Write(ref latest, progress);
             rate = sampler.Record(progress.CompletedBytes);
-            try { wake.Release(); } catch (SemaphoreFullException) { /* already signalled */ }
+            wake.Signal();
         }
 
         subscribe(Handler);
