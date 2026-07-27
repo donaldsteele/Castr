@@ -7,30 +7,26 @@ namespace Castr.Cli;
 /// given, otherwise <see cref="WirePacketizer.DefaultMaxDatagramPayload"/>. Nothing else — see below for why this
 /// is deliberately not clever.
 ///
-/// <para><b>Resolved exactly once per session, before the session is constructed.</b> The budget slices every
-/// chunk (<see cref="ChunkPacketizer.Split"/>) and <see cref="ChunkPacketAssembler"/> rejects packets whose
-/// slicing metadata disagrees with the first one seen for a chunk, so a budget that changed mid-session would
-/// make a session reject its own retransmissions. This type exists so "resolve once, up front" is a visible step
-/// rather than an assumption spread across two runners.</para>
+/// <para><b>Resolved exactly once per session, before the session is constructed.</b> Not for correctness any
+/// more — see below — but because one session emitting several slicings of the same chunk wastes wire for no
+/// gain, and because a knob whose value can drift mid-run is a knob nobody can reason about. This type exists so
+/// "resolve once, up front" is a visible step rather than an assumption spread across two runners.</para>
 ///
-/// <para><b>⚠️ The budget must be the same on every peer participating in a transfer.</b> A sender and a receiver
-/// on different budgets still complete a normal transfer — the receiver reassembles whatever self-consistent
-/// fragment lengths the sender emits — but <b>peer-to-peer relay breaks silently between mismatched peers</b>. A
-/// receiver serving repair from its chunk cache re-slices at <i>its own</i> budget, and a peer that already holds
-/// a partial for that chunk rejects the whole re-slice on <see cref="ChunkPacketAssembler.Offer"/>'s
-/// <c>PacketCount</c> check: no log, no metric. It bites hardest in exactly the sender-offline case peer repair
-/// exists for, and because a partially-received chunk can then never be completed by the mismatched peer while
-/// pending partials are only evicted under cap pressure, the stuck partial is effectively permanent for any file
-/// that never reaches the cap. Treat <c>--datagram-size</c> as a whole-transfer parameter.</para>
+/// <para><b>The budget no longer has to match across peers (M11).</b> It used to, and nothing on the wire
+/// enforced it: <see cref="ChunkPacketAssembler"/> keyed a chunk's fragments by packet index, so a receiver
+/// serving repair from its chunk cache re-sliced at <i>its own</i> budget and any peer already holding a partial
+/// for that chunk rejected the entire re-slice on a <c>PacketCount</c> check — no log, no metric, and worst in
+/// exactly the sender-offline case peer repair exists for. Fragments now carry their byte <i>offset</i>, so two
+/// slicings of the same ciphertext describe the same byte ranges and combine freely. A mismatch costs some
+/// duplicate bytes on the wire where two slicings overlap; it no longer costs relay.</para>
 ///
-/// <para><b>Why there is no MTU auto-derivation here, though it was implemented and then removed in review.</b>
-/// Deriving the budget from the named interface's MTU is sound in isolation (Castr multicasts at TTL=1, so there
-/// are no routers and the path MTU <i>is</i> the interface MTU) but it manufactures exactly the mismatch above
-/// <b>without any operator deciding anything</b>: a laptop on a 1500-MTU LAN and a peer behind a 1400-MTU VPN
-/// would silently pick different budgets and lose peer relay between them. An explicit flag at least makes the
-/// mismatch someone's decision. Automatic per-peer selection only becomes safe once fragments are keyed by
-/// <i>byte offset</i> rather than packet index, which makes two slicings of the same ciphertext interchangeable —
-/// tracked in wiki/synthesis/roadmap.md alongside the assembler rewrite.</para>
+/// <para><b>Why there is still no MTU auto-derivation here.</b> The objection that killed it in M9 review — that
+/// a laptop on a 1500-MTU LAN and a peer behind a 1400-MTU VPN would silently pick different budgets and lose
+/// peer relay between them — is answered by offset keying, which is precisely the precondition that review named.
+/// What is left is a smaller argument: automatic selection would still make the wire shape depend on invisible
+/// host configuration, and there is no measurement yet showing it beats a shipped default that already fits the
+/// standard 1500-byte MTU. Worth revisiting with numbers, not worth reinstating on the strength of the blocker
+/// having been removed.</para>
 ///
 /// <para>If a probe is ever attempted anyway: <b>do not use DontFragment on Windows multicast.</b> The socket
 /// option is silently ignored there — it reads back <c>true</c> and then fragments anyway, accepting payloads up

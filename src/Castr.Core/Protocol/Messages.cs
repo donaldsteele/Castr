@@ -113,15 +113,23 @@ public sealed record PacketFragmentMessage(
 /// relaying peer — produces byte-identical packets. That lets a receiver <b>accumulate</b> a chunk's packets
 /// across repair rounds instead of needing all of them to survive a single round: essential for large chunks,
 /// where independent per-packet loss would otherwise make a whole-chunk round statistically impossible.
-/// The Merkle inclusion proof (over the whole ciphertext) rides only on packet 0; a chunk cannot complete
-/// without every packet, so packet 0 — and thus the proof — is always present at reassembly.
+/// The Merkle inclusion proof (over the whole ciphertext) rides only on the packet at offset 0; a chunk cannot
+/// complete without full byte coverage, so that packet — and thus the proof — is always present at reassembly.
+///
+/// <para><b>A fragment is identified by where it sits, not by which packet it was.</b>
+/// <see cref="FragmentOffset"/> is the fragment's byte offset into the chunk's ciphertext, and it replaced the
+/// <c>PacketIndex</c>/<c>PacketCount</c> pair this message carried through M9. Position is a property of the
+/// <i>ciphertext</i>; a packet index is a property of one sender's <i>slicing</i>. Two peers on different
+/// <c>--datagram-size</c> budgets slice the same chunk into different numbers of packets, so under index keying
+/// their packets described mutually unintelligible layouts and could never be combined — which is what made the
+/// budget a whole-transfer parameter that nothing on the wire enforced. Under offset keying they describe the
+/// same byte ranges of the same ciphertext, so any mix of them reassembles.</para>
 /// </summary>
 public sealed record ChunkPacketMessage(
     byte[] SessionId,
     int FileIndex,
     int ChunkIndex,
-    int PacketIndex,
-    int PacketCount,
+    int FragmentOffset,
     int CiphertextLength,
     byte[] Fragment,
     MerkleProof? Proof);

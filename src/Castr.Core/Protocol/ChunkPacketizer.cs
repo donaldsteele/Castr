@@ -16,13 +16,13 @@ namespace Castr.Core.Protocol;
 /// </summary>
 public static class ChunkPacketizer
 {
-    // version(1)+type(1)+sessionId(16)+fileIndex(4)+chunkIndex(4)+packetIndex(4)+packetCount(4)
-    // +ciphertextLength(4)+fragment length prefix(4)+proof-present flag(1) = 43.
-    // (This comment said "= 47" until M9 — an arithmetic slip in the comment only; the expression below has
-    // always summed to 43, and 43 is what the wire shows. Corrected because the wrong figure was propagated into
-    // a derived datagram-count prediction, where it disagreed with a sniffer capture that the correct figure
-    // reconciles with exactly.)
-    internal const int FixedEnvelopeOverhead = 1 + 1 + TransferManifest.SessionIdSize + 4 + 4 + 4 + 4 + 4 + 4 + 1;
+    // version(1)+type(1)+sessionId(16)+fileIndex(4)+chunkIndex(4)+fragmentOffset(4)
+    // +ciphertextLength(4)+fragment length prefix(4)+proof-present flag(1) = 39.
+    // (Was 43 through M9, when the message carried packetIndex AND packetCount. Offset keying replaced both with
+    // one field, so the envelope lost 4 bytes and every packet gained them back as payload. This comment said
+    // "= 47" until M9 — an arithmetic slip in the comment only; the expression has always been the truth, and a
+    // sniffer capture reconciles against it exactly.)
+    internal const int FixedEnvelopeOverhead = 1 + 1 + TransferManifest.SessionIdSize + 4 + 4 + 4 + 4 + 4 + 1;
 
     /// <summary>Encoded size of a Merkle proof: leafIndex(4)+leafCount(4)+stepCount(2)+steps*(hash+side).</summary>
     private static int ProofEncodedSize(MerkleProof proof) => 4 + 4 + 2 + proof.Steps.Length * (ChunkHash.Size + 1);
@@ -96,16 +96,12 @@ public static class ChunkPacketizer
     /// or from a relaying peer on the same budget — produce byte-identical packets that accumulate across rounds.
     /// </para>
     ///
-    /// <para><b>The one real interop consequence, stated plainly:</b> <see cref="ChunkPacketAssembler.Offer"/>
-    /// rejects a packet whose <c>PacketCount</c>/<c>CiphertextLength</c> disagree with the first packet seen for
-    /// that chunk. Old and new slicing produce different <c>PacketCount</c>s for the same chunk, so a chunk
-    /// relayed by a peer still running the old slicing (or any peer on a different datagram budget — a
-    /// pre-existing property, not one this change introduced) is dropped <i>per chunk</i>: that peer simply stops
-    /// contributing to repair, and the receiver converges from the sender or from a peer that agrees. It
-    /// <b>degrades, never corrupts</b> — a mismatched fragment can never be spliced into a chunk, and the
-    /// Merkle proof over the reassembled ciphertext is checked regardless. This is why the change is safe to land
-    /// without a format-version bump, despite M7's review classifying it as requiring sender+receiver lockstep.
-    /// </para>
+    /// <para><b>Slicings no longer have to agree (M11).</b> Each packet carries its fragment's byte
+    /// <i>offset</i>, and <see cref="ChunkPacketAssembler"/> tracks byte coverage rather than packet arrival, so
+    /// two peers on different datagram budgets slice the same ciphertext into different packets that describe
+    /// the same byte ranges and combine freely. Through M9 the assembler rejected any packet whose
+    /// <c>PacketCount</c> disagreed with the first one seen for a chunk, which made <c>--datagram-size</c> a
+    /// whole-transfer parameter enforced by documentation alone; that constraint is gone.</para>
     /// </remarks>
     public static IReadOnlyList<ChunkPacketMessage> Split(
         byte[] sessionId, int fileIndex, int chunkIndex, byte[] ciphertext, MerkleProof proof, int maxDatagramPayload)
@@ -131,7 +127,7 @@ public static class ChunkPacketizer
             var fragment = new byte[length];
             Array.Copy(ciphertext, offset, fragment, 0, length);
             packets[i] = new ChunkPacketMessage(
-                sessionId, fileIndex, chunkIndex, i, count, ciphertext.Length, fragment, i == 0 ? proof : null);
+                sessionId, fileIndex, chunkIndex, offset, ciphertext.Length, fragment, i == 0 ? proof : null);
         }
         return packets;
     }

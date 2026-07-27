@@ -167,7 +167,7 @@ public class DatagramFiltersTests
         MessageType.JoinRequest => new JoinRequestMessage(new byte[16], new byte[16], new byte[32]),
         MessageType.KeyGrant => new KeyGrantMessage(new byte[16], new byte[16], new byte[48]),
         MessageType.PacketFragment => new PacketFragmentMessage(1, 0, 1, 3, [1, 2, 3]),
-        MessageType.ChunkPacket => new ChunkPacketMessage(new byte[16], 0, 0, 0, 1, 3, [1, 2, 3], SampleProof()),
+        MessageType.ChunkPacket => new ChunkPacketMessage(new byte[16], 0, 0, 0, 3, [1, 2, 3], SampleProof()),
         MessageType.KeyUnavailable => new KeyUnavailableMessage(new byte[16], new byte[16]),
         _ => throw new ArgumentOutOfRangeException(nameof(type)),
     };

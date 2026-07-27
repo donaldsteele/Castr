@@ -50,7 +50,7 @@ public class ReceiverSessionIndexHardeningTests
     {
         var (sessionId, proof) = ManifestFixture();
         var malicious = new ChunkPacketMessage(
-            sessionId, FileIndex: 0, ChunkIndex: OutOfRangeChunkIndex, PacketIndex: 0, PacketCount: 1, CiphertextLength: 16, Fragment: new byte[16], proof);
+            sessionId, FileIndex: 0, ChunkIndex: OutOfRangeChunkIndex, FragmentOffset: 0, CiphertextLength: 16, Fragment: new byte[16], Proof: proof);
 
         var fault = await RunWithInjectedAsync(malicious);
 

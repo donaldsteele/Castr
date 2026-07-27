@@ -58,23 +58,24 @@ internal static class CastrCli
 
     /// <summary>
     /// <c>--datagram-size</c>: the UDP payload budget every wire packet is sliced to. Fixed for the life of a
-    /// session by construction (see <see cref="WirePacketizer.ValidateMaxDatagramPayload"/>) and, because slicing
-    /// is a function of it, a <b>whole-transfer</b> parameter rather than a per-process one — see
-    /// <see cref="DatagramBudget"/> for why mismatched peers silently lose repair relay.
+    /// session by construction (see <see cref="WirePacketizer.ValidateMaxDatagramPayload"/>). It was a
+    /// <b>whole-transfer</b> parameter until M11, because mismatched peers silently lost repair relay; fragments
+    /// now carry their byte offset, so slicings mix freely and the value is genuinely per-process again. See
+    /// <see cref="DatagramBudget"/>.
     ///
     /// <para>Deliberately <see cref="Nullable{T}"/> with no parse-time default, so a runner can tell "the operator
-    /// chose 1472" from "nobody chose". Nothing derives it automatically: an auto-derived per-host value would
-    /// manufacture peer mismatches that nobody decided on.</para>
+    /// chose 1472" from "nobody chose". Nothing derives it automatically — see <see cref="DatagramBudget"/> for
+    /// what is left of that argument now that peer mismatch is no longer a correctness problem.</para>
     /// </summary>
     private static Option<int?> DatagramSizeOption() => new("--datagram-size")
     {
         Description =
             $"UDP payload budget per datagram, in bytes ({WirePacketizer.MinMaxDatagramPayload}-{WirePacketizer.MaxMaxDatagramPayload}, " +
             $"default {WirePacketizer.DefaultMaxDatagramPayload} — the largest payload that does not IP-fragment on a standard " +
-            "1500-byte Ethernet MTU). MUST BE THE SAME on every sender, receiver and relaying peer in a transfer: peers on " +
-            "different budgets slice chunks differently and silently stop being able to repair each other. Raise it only on a " +
-            "path you have measured (e.g. real jumbo frames): an IP-fragmented datagram is lost in full if any one of its " +
-            "fragments is lost. Very small values can be rejected at send time depending on --chunk-size and file size.",
+            "1500-byte Ethernet MTU). Peers on different budgets interoperate: fragments are keyed by byte offset, so any mix " +
+            "of slicings reassembles. Raise it only on a path you have measured (e.g. real jumbo frames): an IP-fragmented " +
+            "datagram is lost in full if any one of its fragments is lost. Very small values can be rejected at send time " +
+            "depending on --chunk-size and file size.",
     };
 
     // ---- send ----

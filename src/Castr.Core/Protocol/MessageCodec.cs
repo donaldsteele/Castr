@@ -9,10 +9,17 @@ namespace Castr.Core.Protocol;
 /// Fixed, deterministic binary encoding for every wire message: [FormatVersion:1][MessageType:1][body].
 /// Not JSON, for the same reason as <see cref="ManifestCodec"/> — a wire protocol needs one unambiguous
 /// byte layout, not a format with encoding-order/whitespace freedom.
+///
+/// <para><b>Version 2 (M11)</b> replaced <see cref="ChunkPacketMessage"/>'s <c>PacketIndex</c>/<c>PacketCount</c>
+/// pair with a single <c>FragmentOffset</c>, so a chunk's fragments are keyed by their position in the
+/// ciphertext rather than by one sender's packet numbering. The version byte is what makes that a clean break:
+/// a peer on either version rejects the other's datagrams outright at <see cref="Decode"/> rather than
+/// mis-parsing a body whose field layout shifted. Bodies are not self-describing, so silent misinterpretation —
+/// not incompatibility — is the failure worth ruling out.</para>
 /// </summary>
 public static class MessageCodec
 {
-    private const byte FormatVersion = 1;
+    private const byte FormatVersion = 2;
     private const int SessionIdSize = TransferManifest.SessionIdSize;
     private const int IdSize = 16;
     private const int PublicKeySize = 32;
@@ -116,8 +123,7 @@ public static class MessageCodec
                 WriteFixed(stream, m.SessionId, SessionIdSize);
                 WriteInt32(stream, m.FileIndex);
                 WriteInt32(stream, m.ChunkIndex);
-                WriteInt32(stream, m.PacketIndex);
-                WriteInt32(stream, m.PacketCount);
+                WriteInt32(stream, m.FragmentOffset);
                 WriteInt32(stream, m.CiphertextLength);
                 WriteVarBytes(stream, m.Fragment);
                 if (m.Proof is null)
@@ -284,12 +290,11 @@ public static class MessageCodec
         var sessionId = reader.ReadBytes(SessionIdSize).ToArray();
         int fileIndex = reader.ReadInt32();
         int chunkIndex = reader.ReadInt32();
-        int packetIndex = reader.ReadInt32();
-        int packetCount = reader.ReadInt32();
+        int fragmentOffset = reader.ReadInt32();
         int ciphertextLength = reader.ReadInt32();
         var fragment = reader.ReadVarBytes();
         MerkleProof? proof = reader.ReadByte() == 1 ? reader.ReadMerkleProof() : null;
-        return new ChunkPacketMessage(sessionId, fileIndex, chunkIndex, packetIndex, packetCount, ciphertextLength, fragment, proof);
+        return new ChunkPacketMessage(sessionId, fileIndex, chunkIndex, fragmentOffset, ciphertextLength, fragment, proof);
     }
 
     private static ManifestMessage DecodeManifestMessage(ref SpanReader reader)

@@ -7,9 +7,26 @@ namespace Castr.Core.Protocol;
 /// (file index, chunk index). Because packets for a given chunk are deterministic and identity-keyed, this
 /// accumulates them <b>across repair rounds</b>: a packet lost on the carousel and re-sent during repair drops
 /// into the same buffer, so a large chunk converges even when independent per-packet loss makes any single
-/// round incomplete. A chunk is only surfaced once every packet is present and the reassembled ciphertext
-/// length matches — a partially-arrived chunk stays buffered and "not yet received", leaving the existing
-/// chunk-level repair to re-request it.
+/// round incomplete. A chunk is only surfaced once every byte of its ciphertext is covered — a partially-arrived
+/// chunk stays buffered and "not yet received", leaving the existing chunk-level repair to re-request it.
+///
+/// <para><b>Fragments are placed by byte offset, not by packet index (M11).</b> Each <see cref="Partial"/> holds
+/// one ciphertext-sized buffer plus the set of byte ranges written into it so far. That single change retires
+/// three separate problems at once:</para>
+/// <list type="bullet">
+/// <item><description><b>Mixed datagram budgets now interoperate.</b> A packet index only means something
+/// relative to the slicing that produced it, so two peers on different <c>--datagram-size</c> values described
+/// mutually unintelligible layouts and the assembler had to reject one of them outright. Byte ranges are a
+/// property of the ciphertext, so any mix of slicings combines. The "the budget must match on every peer"
+/// contract — which held by documentation alone, with no wire enforcement and no diagnostic when it was
+/// violated — is gone.</description></item>
+/// <item><description><b>The mixed-slicing stranding class is retired</b> rather than mitigated. M9's fix chose
+/// a winner (newest slicing resets the buffer) because splicing two slicings was impossible; there is no longer
+/// anything to choose between, so neither source can reset the other's progress.</description></item>
+/// <item><description><b>Nothing is sized from a claimed packet count.</b> The buffer is sized from
+/// <c>CiphertextLength</c>, which a session bounds against the manifest's chunk size, so a pending chunk costs
+/// exactly what a legitimate chunk of that transfer costs and no more.</description></item>
+/// </list>
 ///
 /// Not thread-safe: a session owns one instance and drives it from its single receive loop.
 /// </summary>
@@ -35,14 +52,16 @@ public sealed class ChunkPacketAssembler
     /// would ever reach while sizing the worst case for an attacker. 64 is comfortably above any real concurrency
     /// (the carousel sends chunks in order, so a lossless transfer keeps 1-2 partials open) and cuts the
     /// pathological ceiling 16x.</para>
+    ///
+    /// <para>This is now the <i>only</i> multiplier on pending-chunk memory: with offset keying a partial costs
+    /// its ciphertext length flat, so the worst case is <c>maxPendingChunks x maxCiphertextLength</c> — 16 MB at
+    /// the shipped 256 KiB chunk, and reached only by an attacker opening 64 chunks at once.</para>
     /// </summary>
     public const int DefaultMaxPendingChunks = 64;
 
     /// <summary>
-    /// Smallest fragment size a peer is assumed to have sliced with, used to bound <c>PacketCount</c>. Defaults to
-    /// an <b>8x tolerance</b> below the shipped datagram budget. See <see cref="MinFragmentBytesFor"/> — and note
-    /// that tolerance is about <i>admitting</i> a legitimate packet count, not about making mismatched budgets
-    /// interoperate, which they do not.
+    /// Smallest fragment size a peer is assumed to have sliced with. Defaults to an <b>8x tolerance</b> below the
+    /// shipped datagram budget. See <see cref="MinFragmentBytesFor"/>.
     /// </summary>
     public const int DefaultMinFragmentBytes = WirePacketizer.DefaultMaxDatagramPayload / 8;
 
@@ -54,11 +73,11 @@ public sealed class ChunkPacketAssembler
 
     /// <summary>
     /// Bounds every attacker-controlled sizing field before it is used to allocate:
-    /// <paramref name="maxCiphertextLength"/> caps a single chunk's reassembled ciphertext,
-    /// <paramref name="minFragmentBytes"/> caps the <i>packet count</i> that ciphertext could legitimately have
-    /// been split into, and <paramref name="maxPendingChunks"/> caps how many distinct incomplete chunks may be
-    /// buffered at once (oldest evicted first). A session that knows the manifest's chunk size passes it (plus
-    /// AEAD tag) as the tight per-chunk bound; the default is the 16 MiB hard ceiling.
+    /// <paramref name="maxCiphertextLength"/> caps a single chunk's buffer, <paramref name="minFragmentBytes"/>
+    /// caps how <i>fragmented</i> a partial's coverage may become, and <paramref name="maxPendingChunks"/> caps
+    /// how many distinct incomplete chunks may be buffered at once (oldest-established evicted first). A session
+    /// that knows the manifest's chunk size passes it (plus AEAD tag) as the tight per-chunk bound; the default
+    /// is the 16 MiB hard ceiling.
     /// </summary>
     public ChunkPacketAssembler(
         int maxCiphertextLength = DefaultMaxCiphertextLength,
@@ -87,12 +106,17 @@ public sealed class ChunkPacketAssembler
     /// <c>maxDatagramPayload - FixedEnvelopeOverhead</c>, and the proof term grows with the file's chunk count, so
     /// the exact figure is not knowable from the receiving side without the proof in hand.
     ///
-    /// <para><b>Correction (M9): this margin does NOT make mismatched datagram budgets interoperate</b>, and an
-    /// earlier version of this comment implied it did. This bound only decides whether a claimed
-    /// <c>PacketCount</c> is admissible at all (a DoS guard). A budget mismatch fails earlier and
-    /// unconditionally, on <see cref="Offer"/>'s <c>PacketCount</c> equality check against the first packet seen
-    /// for that chunk. The margin's real job is to admit a legitimate relay whose *whole* chunk arrives from one
-    /// smaller-budget source; it cannot rescue a chunk already partially held at another slicing.</para>
+    /// <para><b>What this bounds, precisely.</b> Since M11 it is not a bound on a packet count — no count is on
+    /// the wire any more — but on how many <i>disjoint byte ranges</i> a partial's coverage may be broken into.
+    /// The two are the same order for an honest sender (each lost packet leaves at most one hole), and the point
+    /// of the bound is the same: a peer sending one-byte fragments at scattered offsets must not be able to grow
+    /// an unbounded interval list. Once the cap is reached a partial still accepts every packet that <i>extends
+    /// or fills</i> its existing coverage, which is every packet a real transfer produces; only a packet that
+    /// would open yet another disjoint hole is dropped.</para>
+    ///
+    /// <para>An earlier version of this comment claimed the 8x margin let mismatched datagram budgets
+    /// interoperate. It did not — through M9 mixed budgets could not interoperate at all. They can now, but by
+    /// offset keying, not by this margin, which remains purely a resource guard.</para>
     /// </summary>
     public static int MinFragmentBytesFor(int maxDatagramPayload) => Math.Max(1, maxDatagramPayload / 8);
 
@@ -100,100 +124,61 @@ public sealed class ChunkPacketAssembler
     public int PendingChunkCount => _partials.Count;
 
     /// <summary>
+    /// Disjoint covered byte ranges currently held for a chunk, or 0 if nothing is buffered for it. Exposed so
+    /// the resource-bound tests can assert on fragmentation directly rather than inferring it.
+    /// </summary>
+    public int CoverageRangeCount(int fileIndex, int chunkIndex) =>
+        _partials.TryGetValue((fileIndex, chunkIndex), out var partial) ? partial.CoverageRangeCount : 0;
+
+    /// <summary>
     /// Buffers <paramref name="packet"/> and, if it completes its chunk, returns the fully reassembled
     /// ciphertext together with the chunk's Merkle proof; otherwise returns <c>null</c>. Duplicate, reordered,
-    /// inconsistent, and oversized (attacker-controlled) packets are all dropped safely without throwing —
-    /// this feeds a shared multicast receive loop that must survive one bad actor or corrupt packet.
+    /// overlapping, inconsistent, and oversized (attacker-controlled) packets are all dropped safely without
+    /// throwing — this feeds a shared multicast receive loop that must survive one bad actor or corrupt packet.
     /// </summary>
     public (byte[] Ciphertext, MerkleProof Proof)? Offer(ChunkPacketMessage packet)
     {
-        if (packet.PacketCount <= 0
-            || packet.PacketIndex < 0
-            || packet.PacketIndex >= packet.PacketCount
-            || packet.CiphertextLength < 0
-            || packet.Fragment.Length > packet.CiphertextLength)
-            return null;
-
-        // Reject before allocating anything sized from the wire: a peer must not be able to claim a gigabyte
-        // ciphertext (which would size `new byte[CiphertextLength]`) or a huge packet count (which would size
-        // `new byte[PacketCount][]`).
+        // Reject before allocating anything sized from the wire. Two fields are attacker-controlled and both are
+        // checked here: CiphertextLength (which sizes the buffer) and FragmentOffset (which indexes into it).
         //
-        // The third clause is the one that matters for the packet count, and it exists because the second is far
-        // too loose to be a real bound. "A legitimate split never produces more packets than ciphertext bytes" is
-        // true but nearly vacuous: the ciphertext bound is manifest-derived, so with a legitimate
-        // `--chunk-size 16777216` (Castr.Cli.CastrPaths.MaxChunkSize) it admits a claim of 16,777,232 packets —
-        // `new byte[16777232][]` is ~134 MB of references from ONE small datagram, and across the pending-chunk
-        // cap that is tens of GB. This is reachable on any tree that allows a large chunk size, not something the
-        // 256 KiB default introduced; the default only changes how much a *typical* session exposes.
-        //
-        // The structural truth is tighter by exactly one factor — the per-packet fragment size:
-        //   PacketCount <= ceil(CiphertextLength / perPacket)
-        // ChunkPacketizer.Split gives every packet after packet 0 the full maxDatagramPayload -
-        // FixedEnvelopeOverhead (1429 bytes at the shipped 1472-byte budget; only packet 0 also reserves
-        // ProofEncodedSize), so a 256 KiB chunk is ~184 legitimate packets. We cannot recompute that exactly here
-        // (the budget the sender used is not on the wire, and the proof term for packet 0 depends on the file's
-        // chunk count), so _minFragmentBytes is deliberately 8x below the real figure, plus one packet of slack
-        // for the remainder. At the shipped budget that admits <=1,426 packets against a legitimate ~184:
-        // ~7.8x headroom for correct senders, ~180x off the attack.
-        //
-        // This clause does not change mixed-budget behaviour either way: the consistency check below already
-        // rejects any packet whose PacketCount disagrees with the first one seen for that chunk, so mixed-budget
-        // sources cannot interoperate *within* a chunk regardless. (Stated precisely because the reverse — "the
-        // 8x tolerance absorbs a budget mismatch" — was believed during M8/M9 and is false: the tolerance gates
-        // this DoS bound only, and the mismatch fails earlier and unconditionally below.)
-        //
-        // Note the severity this closes is not "a flood": ~1024 datagrams (~1.2 MB) forcing GBs of long-lived
-        // LOH allocation is a ~1800x-asymmetric request that terminates the process, where a flood degrades only
-        // while it lasts. Still deferred and tracked in wiki/synthesis/roadmap.md: pre-sizing from the claimed
-        // count at all, rather than holding fragments in a dictionary keyed by packet index so memory tracks
-        // fragments actually *received*. That is a data-structure change on a hot path and wants its own review;
-        // tightening a bound that already exists does not.
-        if (packet.CiphertextLength > _maxCiphertextLength
-            || packet.PacketCount > Math.Max(1, packet.CiphertextLength)
-            || packet.PacketCount > Math.Max(1, (packet.CiphertextLength + _minFragmentBytes - 1) / _minFragmentBytes) + 1)
+        // The packet-count bound this replaced was the larger of the two hazards, and it is now structurally
+        // absent rather than tightened: through M9 a single small datagram could claim `PacketCount` up to the
+        // ciphertext length and size `new byte[PacketCount][]` — ~134 MB of references for a legitimate 16 MiB
+        // chunk size, and tens of GB across the pending-chunk cap, from ~1024 crafted datagrams. Nothing on the
+        // wire sizes an array by count any more; a partial costs exactly CiphertextLength bytes.
+        if (packet.CiphertextLength < 0
+            || packet.CiphertextLength > _maxCiphertextLength
+            || packet.FragmentOffset < 0
+            || packet.Fragment.Length > packet.CiphertextLength
+            || packet.FragmentOffset > packet.CiphertextLength - packet.Fragment.Length)
             return null;
 
         var key = (packet.FileIndex, packet.ChunkIndex);
         if (!_partials.TryGetValue(key, out var partial))
         {
             EvictOldestIfFull();
-            partial = new Partial(packet.PacketCount, packet.CiphertextLength, ++_sequence);
+            partial = new Partial(packet.CiphertextLength, ++_sequence);
             _partials[key] = partial;
         }
-        else if (partial.PacketCount != packet.PacketCount || partial.CiphertextLength != packet.CiphertextLength)
+        else if (partial.CiphertextLength != packet.CiphertextLength)
         {
-            // Inconsistent metadata for this chunk: the two sources sliced it differently (e.g. peers running
-            // different datagram budgets). Never splice mismatched fragments together — but do NOT keep the old
-            // buffer and drop the new packet either, which is what this did until M9 QA measured the consequence:
+            // Two sources disagree about how long this chunk's ciphertext is. Unlike a slicing disagreement —
+            // which offset keying makes a non-event — this is a disagreement about the chunk itself, so at most
+            // one of them is telling the truth and their bytes must never be combined.
             //
-            //   whichever source arrived FIRST pinned the buffer, and every packet of every other slicing was
-            //   dropped from then on. Forget() is called from exactly one place — after a *successful* assembly —
-            //   so a poisoned partial had no recovery path except LRU eviction, which needs _maxPendingChunks
-            //   other distinct chunks to go pending. A lossless transfer keeps 1-2 partials open, so in ordinary
-            //   operation that eviction never happens and the chunk is STRANDED for the rest of the transfer:
-            //   a full, correct re-delivery of all its packets could not complete it.
-            //
-            // So the newest slicing wins: drop the stale partial and re-establish the buffer from this packet.
-            // The property that matters is that a chunk is always completable by *some* source re-sending it in
-            // full, which is exactly what chunk-level repair does. The cost is that two mismatched sources
-            // transmitting the same chunk *simultaneously* can reset each other's progress; that is a
-            // throughput-shaped failure that repair retries out of, where stranding was terminal for the chunk.
-            //
-            // Adversarially this is an improvement, not a new hole. Before, one crafted packet could pin a chunk's
-            // buffer to a slicing nobody else uses and block every legitimate packet for that chunk PERMANENTLY
-            // (nothing releases the partial short of eviction). Now a hostile peer can only reset progress while
-            // it keeps transmitting — the "degrades only while the attack lasts" class, which is what the bounds
-            // above already accept, rather than a lasting denial from a single datagram.
-            //
-            // The structural fix — which retires this whole class rather than choosing a winner — is to key
-            // fragments by BYTE OFFSET rather than packet index, making two slicings of the same ciphertext
-            // interchangeable. Tracked with the assembler rewrite in wiki/synthesis/roadmap.md.
+            // The newest claim wins and the stale buffer is dropped. Keeping the old one instead is what M9 QA
+            // measured the cost of: whichever source arrived FIRST pinned the buffer and everything else was
+            // dropped from then on, with Forget() only called after a *successful* assembly, so a poisoned
+            // partial had no recovery path short of eviction under cap pressure that a lossless transfer never
+            // reaches — the chunk was stranded for the rest of the transfer. Resetting keeps the property that
+            // matters: a chunk is always completable by *some* source re-sending it in full, which is exactly
+            // what chunk-level repair does.
             _partials.Remove(key);
-            partial = new Partial(packet.PacketCount, packet.CiphertextLength, ++_sequence);
+            partial = new Partial(packet.CiphertextLength, ++_sequence);
             _partials[key] = partial;
         }
 
-        partial.Add(packet.PacketIndex, packet.Fragment, packet.Proof);
+        partial.Add(packet.FragmentOffset, packet.Fragment, packet.Proof, MaxCoverageRangesFor(packet.CiphertextLength));
 
         if (!partial.TryAssemble(out var ciphertext, out var proof))
             return null;
@@ -202,7 +187,20 @@ public sealed class ChunkPacketAssembler
         return (ciphertext, proof);
     }
 
-    /// <summary>Caps concurrent pending chunks: when full, drop the oldest still-incomplete one (repair re-requests it later).</summary>
+    /// <summary>
+    /// How many disjoint covered byte ranges one partial may hold. Derived from <see cref="_minFragmentBytes"/>:
+    /// a sender slicing at or above that size cannot produce more ranges than this, plus slack for the remainder
+    /// range and for one hole at each end.
+    /// </summary>
+    private int MaxCoverageRangesFor(int ciphertextLength) =>
+        Math.Max(1, (ciphertextLength + _minFragmentBytes - 1) / _minFragmentBytes) + 2;
+
+    /// <summary>
+    /// Caps concurrent pending chunks: when full, drop the one whose buffer was established earliest (repair
+    /// re-requests it later). Deliberately FIFO by establishment and not LRU — a partial that keeps receiving
+    /// packets is making progress, but so is one that has been quietly waiting for a single lost fragment, and
+    /// the oldest buffer is the one least likely to still have a source transmitting into it.
+    /// </summary>
     private void EvictOldestIfFull()
     {
         if (_partials.Count < _maxPendingChunks)
@@ -224,62 +222,117 @@ public sealed class ChunkPacketAssembler
     /// <summary>Drops any buffered packets for a chunk — call once the chunk has been accepted (or rejected) so its buffer is released.</summary>
     public void Forget(int fileIndex, int chunkIndex) => _partials.Remove((fileIndex, chunkIndex));
 
+    /// <summary>
+    /// One chunk's ciphertext under construction: the bytes, plus the disjoint byte ranges written so far.
+    /// Complete when a single range covers <c>[0, CiphertextLength)</c> and the proof has arrived.
+    /// </summary>
     private sealed class Partial
     {
-        private readonly byte[]?[] _fragments;
-        private int _received;
+        // Sorted by Start, disjoint, and merged whenever two become adjacent — so an in-order delivery holds
+        // exactly one range and the common case costs one comparison per packet.
+        private readonly List<(int Start, int End)> _covered = [];
+        private readonly byte[] _buffer;
         private MerkleProof? _proof;
 
-        public Partial(int packetCount, int ciphertextLength, long sequence)
+        public Partial(int ciphertextLength, long sequence)
         {
-            PacketCount = packetCount;
-            CiphertextLength = ciphertextLength;
+            _buffer = new byte[ciphertextLength];
             Sequence = sequence;
-            _fragments = new byte[packetCount][];
         }
 
-        public int PacketCount { get; }
-        public int CiphertextLength { get; }
+        public int CiphertextLength => _buffer.Length;
         public long Sequence { get; }
 
-        public void Add(int index, byte[] fragment, MerkleProof? proof)
+        /// <summary>Disjoint covered ranges. Exposed for the resource-bound tests, which assert on fragmentation.</summary>
+        public int CoverageRangeCount => _covered.Count;
+
+        /// <summary>
+        /// Writes a fragment's still-uncovered bytes into the buffer. Bytes already covered are left alone:
+        /// first writer wins, so a duplicate costs nothing and a hostile peer cannot overwrite bytes a good
+        /// source already delivered. It can still poison bytes nobody has delivered yet — but that produces a
+        /// chunk that fails Merkle verification, which the caller drops <i>and forgets</i>, so the next round
+        /// starts from an empty buffer. Poisoning degrades throughput while it lasts; it cannot strand a chunk.
+        /// </summary>
+        public void Add(int offset, byte[] fragment, MerkleProof? proof, int maxRanges)
         {
             if (proof is not null)
-                _proof ??= proof; // proof rides on packet 0
-            if (index < 0 || index >= PacketCount || _fragments[index] is not null)
-                return; // out of range or duplicate — nothing new
-            _fragments[index] = fragment;
-            _received++;
+                _proof ??= proof; // the proof rides on the fragment at offset 0
+
+            if (fragment.Length == 0)
+                return;
+
+            int start = offset;
+            int end = offset + fragment.Length;
+
+            // A packet that neither touches nor overlaps any existing range would open a new hole. Refuse that
+            // once the range list is at its cap, so scattered one-byte fragments cannot grow it without bound.
+            if (_covered.Count >= maxRanges && !TouchesExisting(start, end))
+                return;
+
+            // Copy only the gaps. _covered is sorted and disjoint, so one forward walk finds them all.
+            int cursor = start;
+            int i = 0;
+            while (i < _covered.Count && _covered[i].End <= cursor)
+                i++;
+            while (cursor < end)
+            {
+                if (i < _covered.Count && _covered[i].Start <= cursor)
+                {
+                    cursor = Math.Min(end, _covered[i].End);
+                    i++;
+                    continue;
+                }
+                int gapEnd = i < _covered.Count ? Math.Min(end, _covered[i].Start) : end;
+                Array.Copy(fragment, cursor - offset, _buffer, cursor, gapEnd - cursor);
+                cursor = gapEnd;
+            }
+
+            Cover(start, end);
         }
 
         public bool TryAssemble(out byte[] ciphertext, out MerkleProof proof)
         {
             ciphertext = [];
             proof = default!;
+
             var capturedProof = _proof;
-            if (_received != PacketCount || capturedProof is null)
+            if (capturedProof is null)
+                return false;
+            if (CiphertextLength > 0 && (_covered.Count != 1 || _covered[0] != (0, CiphertextLength)))
                 return false;
 
-            int total = 0;
-            foreach (var fragment in _fragments)
-            {
-                if (fragment is null)
-                    return false;
-                total += fragment.Length;
-            }
-            if (total != CiphertextLength)
-                return false;
-
-            var result = new byte[total];
-            int offset = 0;
-            foreach (var fragment in _fragments)
-            {
-                Array.Copy(fragment!, 0, result, offset, fragment!.Length);
-                offset += fragment.Length;
-            }
-            ciphertext = result;
+            // Handing the buffer out directly is safe: Offer removes the partial in the same step, so nothing
+            // can write into it afterwards.
+            ciphertext = _buffer;
             proof = capturedProof;
             return true;
+        }
+
+        private bool TouchesExisting(int start, int end)
+        {
+            foreach (var range in _covered)
+                if (range.Start <= end && start <= range.End)
+                    return true;
+            return false;
+        }
+
+        /// <summary>Unions <c>[start, end)</c> into the covered set, merging every range it touches or overlaps.</summary>
+        private void Cover(int start, int end)
+        {
+            int first = 0;
+            while (first < _covered.Count && _covered[first].End < start)
+                first++;
+
+            int last = first;
+            while (last < _covered.Count && _covered[last].Start <= end)
+            {
+                start = Math.Min(start, _covered[last].Start);
+                end = Math.Max(end, _covered[last].End);
+                last++;
+            }
+
+            _covered.RemoveRange(first, last - first);
+            _covered.Insert(first, (start, end));
         }
     }
 }

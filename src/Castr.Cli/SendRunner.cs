@@ -48,9 +48,9 @@ internal static class SendRunner
             return ExitCodes.InvalidInput;
         }
 
-        // Fixed here, once, for the life of the session — see WirePacketizer.ValidateMaxDatagramPayload. Note this
-        // is a whole-TRANSFER parameter, not a per-process one: peers on different budgets cannot relay repair to
-        // each other. See DatagramBudget.
+        // Fixed here, once, for the life of the session — see WirePacketizer.ValidateMaxDatagramPayload. Until M11
+        // this was a whole-TRANSFER parameter, because peers on different budgets could not relay repair to each
+        // other; offset-keyed fragments removed that constraint. See DatagramBudget.
         int datagramSize = DatagramBudget.Resolve(options.DatagramSize);
 
         if (datagramSize > WirePacketizer.DefaultMaxDatagramPayload && !options.UseTui)
@@ -63,10 +63,11 @@ internal static class SendRunner
         }
         else if (options.DatagramSize is not null && datagramSize != WirePacketizer.DefaultMaxDatagramPayload && !options.UseTui)
         {
-            // A non-default budget is a whole-transfer decision: a receiver left on the default still completes
-            // this transfer, but it cannot exchange repair with a peer on a different budget.
+            // Peers on other budgets now interoperate — fragments are keyed by byte offset — so this is no longer
+            // the correctness warning it was. What is left is a wire-efficiency note: two slicings of the same
+            // chunk overlap where their boundaries differ, and those overlapping bytes are sent twice.
             console.MarkupLineInterpolated(
-                $"[yellow]note:[/] --datagram-size {datagramSize} must be passed to every receiver and peer in this transfer; peers on different budgets cannot relay repair to each other.");
+                $"[yellow]note:[/] --datagram-size {datagramSize} differs from the default; peers on other budgets still interoperate, but repair between mismatched slicings re-sends some bytes twice.");
         }
 
         if (!File.Exists(options.FilePath))
