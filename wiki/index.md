@@ -40,6 +40,8 @@ When this file exceeds ~300 lines or the wiki passes ~150 pages, shard into `wik
 
 - [[m9-datagram-efficiency]] — M9 stage 1: proof space reserved on packet 0 only, datagram budget 1200 → 1472. 309 → 184 datagrams per 256 KiB chunk (1.68×), **1.41×** goodput (post-review re-measurement; the pre-review figure was 1.42×), prediction exact to the datagram; needs no wire-format change, and the mixed-slicing hazard is a *stranded chunk* (found by QA, fixed) rather than mere degradation — which is also why MTU auto-derivation was implemented and then removed.
 
+- [[m11-backlog-clearance]] — M11 complete: ten backlog items in ten commits; 498 → **538 tests**, 0 warnings, Docker netem tier green *and run in-loop* for the first time since M3. Headline is **offset-keyed fragment reassembly** — `ChunkPacketMessage` trades `PacketIndex`+`PacketCount` for `FragmentOffset`, which retires M9's mixed-slicing stranding class, removes the claimed-count allocation, and drops the "`--datagram-size` must match on every peer" contract; **`FormatVersion` 1 → 2**. Also: session ids bound to transfers (persistently — a process-lifetime registry would enforce nothing), manifests range-checked at admission, three memory/lifetime bounds, and an E2E loss filter that had been sparing one packet in every 184.
+
 - [[proposal-section-based-repair]] — **proposal, not a decision**: replace the carousel-idle heuristic with an explicit sender-emitted section-completion signal. Motivated by deleting the bug class behind both M7 liveness defects, *not* by throughput (amplification is already 1.05×, and deferring repair measured −11% in isolation). Blocked on M8.
 
 ## Documentation outside the wiki

@@ -26,9 +26,10 @@ Last reconciled against `main` at `c4a899b` on 2026-07-27.
 | M8 | Default chunk size 8 KB → 256 KB | 1.33×, and **2.80× under real netem loss** | `50e4cf4`; run log |
 | M9 | Packetization efficiency | 309 → 184 datagrams/chunk, **1.41×**; a stranded-chunk defect found + fixed | `wiki/synthesis/m9-datagram-efficiency.md` |
 | M10 | Bounded receiver chunk cache | Peak private bytes 2,461.7 → 93.3 MB; cold rebuild path moved off `_stateGate` | `c4a899b`; run log |
+| M11 | Clear the small backlog | All ten items, one commit each; wire keyed by byte offset, `FormatVersion` 1 → 2 | `wiki/synthesis/m11-backlog-clearance.md` |
 
-Tree state: **498 tests, 0 warnings** under `-warnaserror`, Docker netem E2E tier green, `main` clean
-and in sync with `origin/main`.
+Tree state: **538 tests, 0 warnings** under `-warnaserror`, Docker netem E2E tier green **and run
+in-loop**, `main` clean.
 
 ### The throughput programme is closed
 
@@ -53,10 +54,17 @@ is cheap and leaves the tree clean before a structural change lands in the same 
 largest genuine engineering item and wants a clean base; there is no point shipping a v1 before the
 fan-out claim it advertises has been validated.
 
-### M11 — Clear the small backlog
+### M11 — Clear the small backlog — ✅ **COMPLETE (2026-07-27)**
 
-Ten items, one to three files each, no new design decisions. All ten were verified still present in
-code at `c4a899b` — none had been silently fixed. Anchors are recorded so the implementer does not
+All ten done, one commit each. Write-up: `wiki/synthesis/m11-backlog-clearance.md`. Acceptance met:
+**538 tests** (from 498), 0 warnings, Docker netem tier green, and every behavioural item covered by a
+test **mutation-verified to fail against the pre-fix code**. Item 6 is naming-only, so it has no
+behavioural control by construction. **No independent QA subagent pass** — this session ran under an
+instruction not to spawn subagents; the mutation verification stands in for it, and this is the one
+part of the definition of done that is not satisfied.
+
+Original framing, kept for the record: ten items, one to three files each, no new design decisions.
+All ten were verified still present in code at `c4a899b` — none had been silently fixed. Anchors are recorded so the implementer does not
 re-hunt them.
 
 | Item | Anchor | Note |

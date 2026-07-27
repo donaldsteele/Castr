@@ -1,0 +1,1137 @@
+{
+  "Castr.sln": {
+    "mtime": 1784951647.7422779,
+    "ast_hash": "76bfccb6f86439f5958644e9bd659553",
+    "semantic_hash": "76bfccb6f86439f5958644e9bd659553"
+  },
+  "global.json": {
+    "mtime": 1784913546.635485,
+    "ast_hash": "2e804094cc0b66caf8a95a561a9df2c0",
+    "semantic_hash": "2e804094cc0b66caf8a95a561a9df2c0"
+  },
+  "src/Castr.Cli/Castr.Cli.csproj": {
+    "mtime": 1784923390.1652105,
+    "ast_hash": "2af6065548160e7b33e48ec6b45ca1df",
+    "semantic_hash": "2af6065548160e7b33e48ec6b45ca1df"
+  },
+  "src/Castr.Cli/Program.cs": {
+    "mtime": 1784923624.0476499,
+    "ast_hash": "929b2dedb207b176e070c0be1ce9cf33",
+    "semantic_hash": "929b2dedb207b176e070c0be1ce9cf33"
+  },
+  "src/Castr.Core.Discovery/Castr.Core.Discovery.csproj": {
+    "mtime": 1784951647.7460258,
+    "ast_hash": "e9f49f12a3ab63a9428e15f3af7610bc",
+    "semantic_hash": "e9f49f12a3ab63a9428e15f3af7610bc"
+  },
+  "src/Castr.Core/Castr.Core.csproj": {
+    "mtime": 1784914544.1123292,
+    "ast_hash": "597dafeb47bdd60980a640d49d082c48",
+    "semantic_hash": "597dafeb47bdd60980a640d49d082c48"
+  },
+  "src/Castr.Core/Chunking/ChunkHash.cs": {
+    "mtime": 1784914593.1754987,
+    "ast_hash": "254c3ee627cc5e19a31ed71e33d936b5",
+    "semantic_hash": "254c3ee627cc5e19a31ed71e33d936b5"
+  },
+  "src/Castr.Core/Chunking/ChunkRange.cs": {
+    "mtime": 1784914583.4437623,
+    "ast_hash": "e2ba61f1caa8e7b25ec1defdf99a023d",
+    "semantic_hash": "e2ba61f1caa8e7b25ec1defdf99a023d"
+  },
+  "src/Castr.Core/Chunking/Chunker.cs": {
+    "mtime": 1784914644.8176436,
+    "ast_hash": "999a14675382b12cbe75b825fcc1676f",
+    "semantic_hash": "999a14675382b12cbe75b825fcc1676f"
+  },
+  "src/Castr.Core/Chunking/FileSystemFileSink.cs": {
+    "mtime": 1784914635.750935,
+    "ast_hash": "651d9d9716620e31c31cf3bcb3703403",
+    "semantic_hash": "651d9d9716620e31c31cf3bcb3703403"
+  },
+  "src/Castr.Core/Chunking/FileSystemFileSource.cs": {
+    "mtime": 1784914627.9198642,
+    "ast_hash": "59ce387e6ba998cd19b40cb41f853963",
+    "semantic_hash": "59ce387e6ba998cd19b40cb41f853963"
+  },
+  "src/Castr.Core/Chunking/IFileSink.cs": {
+    "mtime": 1784914605.9633336,
+    "ast_hash": "3d5849104b7888ea55d9839d430c92af",
+    "semantic_hash": "3d5849104b7888ea55d9839d430c92af"
+  },
+  "src/Castr.Core/Chunking/IFileSource.cs": {
+    "mtime": 1784914602.1960032,
+    "ast_hash": "9ceb045d07ffb089826a616bd54c31de",
+    "semantic_hash": "9ceb045d07ffb089826a616bd54c31de"
+  },
+  "src/Castr.Core/Chunking/MemoryFileSink.cs": {
+    "mtime": 1784914615.455704,
+    "ast_hash": "4c11327754baac104a0c2ec658a04239",
+    "semantic_hash": "4c11327754baac104a0c2ec658a04239"
+  },
+  "src/Castr.Core/Chunking/MemoryFileSource.cs": {
+    "mtime": 1784914610.7270155,
+    "ast_hash": "fe5413fa9d5afdbc3325a82e7bef5cf7",
+    "semantic_hash": "fe5413fa9d5afdbc3325a82e7bef5cf7"
+  },
+  "src/Castr.Core/Manifest/ManifestCodec.cs": {
+    "mtime": 1784919624.8181076,
+    "ast_hash": "cf4978d8d4f2fe9ec49286a91746aee4",
+    "semantic_hash": "cf4978d8d4f2fe9ec49286a91746aee4"
+  },
+  "src/Castr.Core/Manifest/ManifestSigner.cs": {
+    "mtime": 1784914832.0958478,
+    "ast_hash": "7d450a395d13c723b32b5b94e0eaefce",
+    "semantic_hash": "7d450a395d13c723b32b5b94e0eaefce"
+  },
+  "src/Castr.Core/Manifest/ManifestVerifier.cs": {
+    "mtime": 1784914839.97503,
+    "ast_hash": "a66e9ca381a8049468954fde97a947a1",
+    "semantic_hash": "a66e9ca381a8049468954fde97a947a1"
+  },
+  "src/Castr.Core/Manifest/MerkleTree.cs": {
+    "mtime": 1784951647.7541332,
+    "ast_hash": "a23ae0c197907275244dee22f4e3e2de",
+    "semantic_hash": "a23ae0c197907275244dee22f4e3e2de"
+  },
+  "src/Castr.Core/Manifest/SignedManifest.cs": {
+    "mtime": 1784914825.412285,
+    "ast_hash": "d01be99fa7b87db6ec7281bc13a424a9",
+    "semantic_hash": "d01be99fa7b87db6ec7281bc13a424a9"
+  },
+  "src/Castr.Core/Manifest/TransferManifest.cs": {
+    "mtime": 1784919606.0189486,
+    "ast_hash": "6d289d46bea3b9114506514367617635",
+    "semantic_hash": "6d289d46bea3b9114506514367617635"
+  },
+  "src/Castr.Core/Protocol/ChunkBitmap.cs": {
+    "mtime": 1784915750.0805988,
+    "ast_hash": "ca35349dd3263cced02a7cfa45c23bbe",
+    "semantic_hash": "ca35349dd3263cced02a7cfa45c23bbe"
+  },
+  "src/Castr.Core/Protocol/IPeerTable.cs": {
+    "mtime": 1784951647.7541332,
+    "ast_hash": "19c712a2c2d7ef523c8a08c4b6e74b4b",
+    "semantic_hash": "19c712a2c2d7ef523c8a08c4b6e74b4b"
+  },
+  "src/Castr.Core/Protocol/MessageCodec.cs": {
+    "mtime": 1784951647.7581608,
+    "ast_hash": "8212ea823c2d13c13ff169d0079c89c8",
+    "semantic_hash": "8212ea823c2d13c13ff169d0079c89c8"
+  },
+  "src/Castr.Core/Protocol/Messages.cs": {
+    "mtime": 1784951647.758885,
+    "ast_hash": "35b6f3ecc9c03f9d8cc927aac1723781",
+    "semantic_hash": "35b6f3ecc9c03f9d8cc927aac1723781"
+  },
+  "src/Castr.Core/Protocol/PeerTable.cs": {
+    "mtime": 1784951647.7609048,
+    "ast_hash": "70afdaafdb2447ec1d3446893998e88a",
+    "semantic_hash": "70afdaafdb2447ec1d3446893998e88a"
+  },
+  "src/Castr.Core/Protocol/ReceiverSession.cs": {
+    "mtime": 1784951647.7629168,
+    "ast_hash": "676d24f40a1c9130d87fd972fe96b45f",
+    "semantic_hash": "676d24f40a1c9130d87fd972fe96b45f"
+  },
+  "src/Castr.Core/Protocol/RepairCoordinator.cs": {
+    "mtime": 1784915836.4357097,
+    "ast_hash": "a91afef7ef05635133386fb038648eaf",
+    "semantic_hash": "a91afef7ef05635133386fb038648eaf"
+  },
+  "src/Castr.Core/Protocol/SenderSession.cs": {
+    "mtime": 1784951647.7629168,
+    "ast_hash": "19402572b2e8b83e607c48ca5cb0b6cf",
+    "semantic_hash": "19402572b2e8b83e607c48ca5cb0b6cf"
+  },
+  "src/Castr.Core/Security/PathSafety.cs": {
+    "mtime": 1784915160.0086756,
+    "ast_hash": "07624a3e132aed64546da39319055f99",
+    "semantic_hash": "07624a3e132aed64546da39319055f99"
+  },
+  "src/Castr.Core/Security/PublicKeyId.cs": {
+    "mtime": 1784914820.9428606,
+    "ast_hash": "7fe8eea9b8dc9e2a1d47d34f3fc83602",
+    "semantic_hash": "7fe8eea9b8dc9e2a1d47d34f3fc83602"
+  },
+  "src/Castr.Core/Time/FakeClock.cs": {
+    "mtime": 1784915741.609381,
+    "ast_hash": "39540deb74b0554ae3793e26898703ed",
+    "semantic_hash": "39540deb74b0554ae3793e26898703ed"
+  },
+  "src/Castr.Core/Time/ISystemClock.cs": {
+    "mtime": 1784915735.805357,
+    "ast_hash": "a4585dc66dfaeeea321d63665b887d5e",
+    "semantic_hash": "a4585dc66dfaeeea321d63665b887d5e"
+  },
+  "src/Castr.Core/Transport/Endpoint.cs": {
+    "mtime": 1784915410.057439,
+    "ast_hash": "0666163ed70dc49d72f3c41b7cff10d4",
+    "semantic_hash": "0666163ed70dc49d72f3c41b7cff10d4"
+  },
+  "src/Castr.Core/Transport/IMulticastTransport.cs": {
+    "mtime": 1784915413.9181354,
+    "ast_hash": "735167c52c273939938d83f1a4140ce1",
+    "semantic_hash": "735167c52c273939938d83f1a4140ce1"
+  },
+  "src/Castr.Core/Transport/IUnicastTransport.cs": {
+    "mtime": 1784915418.5055697,
+    "ast_hash": "50f54c0fd2df125d0acba07e6bb6edb5",
+    "semantic_hash": "50f54c0fd2df125d0acba07e6bb6edb5"
+  },
+  "src/Castr.Core/Transport/InMemory/ChaosOptions.cs": {
+    "mtime": 1784915423.6191945,
+    "ast_hash": "ae653d91f09ac8e3f7cf16e5b90c2ace",
+    "semantic_hash": "ae653d91f09ac8e3f7cf16e5b90c2ace"
+  },
+  "src/Castr.Core/Transport/InMemory/InMemoryMulticastTransport.cs": {
+    "mtime": 1784915459.70074,
+    "ast_hash": "59775747d68c56d89424377a59e2b23b",
+    "semantic_hash": "59775747d68c56d89424377a59e2b23b"
+  },
+  "src/Castr.Core/Transport/InMemory/InMemoryNetwork.cs": {
+    "mtime": 1784915450.5552585,
+    "ast_hash": "90eeeb944c3cf2f96066f5551d6116f4",
+    "semantic_hash": "90eeeb944c3cf2f96066f5551d6116f4"
+  },
+  "src/Castr.Core/Transport/InMemory/InMemoryUnicastTransport.cs": {
+    "mtime": 1784915466.754671,
+    "ast_hash": "f344fc8c3f4a065ddefda2c242fdc899",
+    "semantic_hash": "f344fc8c3f4a065ddefda2c242fdc899"
+  },
+  "src/Castr.Core/Transport/Udp/MulticastInterfaces.cs": {
+    "mtime": 1784915594.146501,
+    "ast_hash": "4a86f6e796ff6a7254b89dc6c5fde310",
+    "semantic_hash": "4a86f6e796ff6a7254b89dc6c5fde310"
+  },
+  "src/Castr.Core/Transport/Udp/UdpMulticastTransport.cs": {
+    "mtime": 1784932550.5090444,
+    "ast_hash": "7f68e75ac8ce117a9e69684463ec4f80",
+    "semantic_hash": "7f68e75ac8ce117a9e69684463ec4f80"
+  },
+  "src/Castr.Core/Transport/Udp/UdpUnicastTransport.cs": {
+    "mtime": 1784915586.5495646,
+    "ast_hash": "7635f1938e7f107c1bc6265e5141f7e1",
+    "semantic_hash": "7635f1938e7f107c1bc6265e5141f7e1"
+  },
+  "src/Castr.Core/Trust/FileTrustStore.cs": {
+    "mtime": 1784914971.1423542,
+    "ast_hash": "290028c23f9c15bb98e07c5454703b05",
+    "semantic_hash": "290028c23f9c15bb98e07c5454703b05"
+  },
+  "src/Castr.Core/Trust/ITrustStore.cs": {
+    "mtime": 1784914929.448652,
+    "ast_hash": "e3d970325d1ef1942e83b840846eab53",
+    "semantic_hash": "e3d970325d1ef1942e83b840846eab53"
+  },
+  "src/Castr.Core/Trust/InMemoryTrustStore.cs": {
+    "mtime": 1784914933.9879472,
+    "ast_hash": "86d8a324f8dae1055518c1e2404bb952",
+    "semantic_hash": "86d8a324f8dae1055518c1e2404bb952"
+  },
+  "src/Castr.Core/Trust/TrustDecision.cs": {
+    "mtime": 1784914989.9237685,
+    "ast_hash": "afd87fba837f6fddfa72bff755963058",
+    "semantic_hash": "afd87fba837f6fddfa72bff755963058"
+  },
+  "src/Castr.Core/Trust/TrustDecisionEngine.cs": {
+    "mtime": 1784914997.0002017,
+    "ast_hash": "1e04d566592d2876802f03ef61285d6f",
+    "semantic_hash": "1e04d566592d2876802f03ef61285d6f"
+  },
+  "src/Castr.Core/Trust/TrustEntry.cs": {
+    "mtime": 1784914925.5377536,
+    "ast_hash": "8352ea428b4f0a4a767cce67d5692318",
+    "semantic_hash": "8352ea428b4f0a4a767cce67d5692318"
+  },
+  "src/Castr.Core/Trust/TrustSeedMerger.cs": {
+    "mtime": 1784914977.4691527,
+    "ast_hash": "2cced133a31196527f2ab6e83d88e57e",
+    "semantic_hash": "2cced133a31196527f2ab6e83d88e57e"
+  },
+  "src/Castr.Core/Trust/TrustStoreJsonCodec.cs": {
+    "mtime": 1784914962.7876408,
+    "ast_hash": "4bd2086ea27e65242ac6ec774a87a44a",
+    "semantic_hash": "4bd2086ea27e65242ac6ec774a87a44a"
+  },
+  "src/Castr.Core/Trust/UnknownSenderPolicy.cs": {
+    "mtime": 1784914984.7562547,
+    "ast_hash": "3d7bb560f45679563339f05867837c0c",
+    "semantic_hash": "3d7bb560f45679563339f05867837c0c"
+  },
+  "src/Castr.Tui/Castr.Tui.csproj": {
+    "mtime": 1784922708.821121,
+    "ast_hash": "6f4e4fece663947e01d1f3b4972cf338",
+    "semantic_hash": "6f4e4fece663947e01d1f3b4972cf338"
+  },
+  "tests/Castr.Cli.Tests/Castr.Cli.Tests.csproj": {
+    "mtime": 1784923864.1960733,
+    "ast_hash": "85432da457fdb1e8977e798614739015",
+    "semantic_hash": "85432da457fdb1e8977e798614739015"
+  },
+  "tests/Castr.Core.E2ETests/Castr.Core.E2ETests.csproj": {
+    "mtime": 1784932550.5116365,
+    "ast_hash": "fb3dd44fe41c9f86059d28273bc3f368",
+    "semantic_hash": "fb3dd44fe41c9f86059d28273bc3f368"
+  },
+  "tests/Castr.Core.IntegrationTests/Castr.Core.IntegrationTests.csproj": {
+    "mtime": 1784913544.187467,
+    "ast_hash": "90876e0eae30e069bd952b1d93dcaf06",
+    "semantic_hash": "90876e0eae30e069bd952b1d93dcaf06"
+  },
+  "tests/Castr.Core.IntegrationTests/ChaosTransport.cs": {
+    "mtime": 1784916263.7335813,
+    "ast_hash": "3b013e1b01e51f54435a4ece0b3e0546",
+    "semantic_hash": "3b013e1b01e51f54435a4ece0b3e0546"
+  },
+  "tests/Castr.Core.IntegrationTests/RealMulticastFanOutTests.cs": {
+    "mtime": 1784916278.6762886,
+    "ast_hash": "2d152ddc892f3c6b7e92bab6410012c7",
+    "semantic_hash": "2d152ddc892f3c6b7e92bab6410012c7"
+  },
+  "tests/Castr.Core.IntegrationTests/RealTransferRepairTests.cs": {
+    "mtime": 1784919913.4008794,
+    "ast_hash": "cd8d678b0ca27840fafd9c53da43b129",
+    "semantic_hash": "cd8d678b0ca27840fafd9c53da43b129"
+  },
+  "tests/Castr.Core.IntegrationTests/SmokeTest.cs": {
+    "mtime": 1784916240.403452,
+    "ast_hash": "c50a4e1b6cac5f27a9d139afaec1dd51",
+    "semantic_hash": "c50a4e1b6cac5f27a9d139afaec1dd51"
+  },
+  "tests/Castr.Core.Tests/Castr.Core.Tests.csproj": {
+    "mtime": 1784913544.1472385,
+    "ast_hash": "90876e0eae30e069bd952b1d93dcaf06",
+    "semantic_hash": "90876e0eae30e069bd952b1d93dcaf06"
+  },
+  "tests/Castr.Core.Tests/Chunking/ChunkHashTests.cs": {
+    "mtime": 1784914710.5993555,
+    "ast_hash": "931d178ea56723f64f0c0a5bf59d95f5",
+    "semantic_hash": "931d178ea56723f64f0c0a5bf59d95f5"
+  },
+  "tests/Castr.Core.Tests/Chunking/ChunkLayoutTests.cs": {
+    "mtime": 1784914690.7006516,
+    "ast_hash": "b1d5b9ccd0b9932ef2bf74ac634957f9",
+    "semantic_hash": "b1d5b9ccd0b9932ef2bf74ac634957f9"
+  },
+  "tests/Castr.Core.Tests/Chunking/ChunkerTests.cs": {
+    "mtime": 1784914701.2695575,
+    "ast_hash": "4097d849fc62fa6dec4c18c35bd3e0d4",
+    "semantic_hash": "4097d849fc62fa6dec4c18c35bd3e0d4"
+  },
+  "tests/Castr.Core.Tests/Chunking/FileSystemFileSourceSinkTests.cs": {
+    "mtime": 1784914761.4683173,
+    "ast_hash": "cc35f90f3e6495f0b53bc9ff24c2c128",
+    "semantic_hash": "cc35f90f3e6495f0b53bc9ff24c2c128"
+  },
+  "tests/Castr.Core.Tests/Manifest/ManifestCodecTests.cs": {
+    "mtime": 1784919798.453662,
+    "ast_hash": "a0f14caaddab2a23e6ad828714e65ca2",
+    "semantic_hash": "a0f14caaddab2a23e6ad828714e65ca2"
+  },
+  "tests/Castr.Core.Tests/Manifest/ManifestSigningTests.cs": {
+    "mtime": 1784932550.5192854,
+    "ast_hash": "cfcd58b8f00ba1aa3a6b789b4901445d",
+    "semantic_hash": "cfcd58b8f00ba1aa3a6b789b4901445d"
+  },
+  "tests/Castr.Core.Tests/Manifest/MerkleTreeTests.cs": {
+    "mtime": 1784914735.862888,
+    "ast_hash": "83d8d4099c5813ff71d2ef89cd17bb58",
+    "semantic_hash": "83d8d4099c5813ff71d2ef89cd17bb58"
+  },
+  "tests/Castr.Core.Tests/Protocol/ChunkBitmapTests.cs": {
+    "mtime": 1784915761.384105,
+    "ast_hash": "525793df09045d1783e85ab2ff6536ab",
+    "semantic_hash": "525793df09045d1783e85ab2ff6536ab"
+  },
+  "tests/Castr.Core.Tests/Protocol/EndToEndTransferTests.cs": {
+    "mtime": 1784951647.8099802,
+    "ast_hash": "201b3a47363ed5b8c3ba9dca2dacec3e",
+    "semantic_hash": "201b3a47363ed5b8c3ba9dca2dacec3e"
+  },
+  "tests/Castr.Core.Tests/Protocol/MessageCodecTests.cs": {
+    "mtime": 1784951647.8119822,
+    "ast_hash": "a1490845050b44f786d7bb42a4f8a79d",
+    "semantic_hash": "a1490845050b44f786d7bb42a4f8a79d"
+  },
+  "tests/Castr.Core.Tests/Protocol/PeerTableTests.cs": {
+    "mtime": 1784915799.539488,
+    "ast_hash": "7485763c48463910ece74f36e71eabb9",
+    "semantic_hash": "7485763c48463910ece74f36e71eabb9"
+  },
+  "tests/Castr.Core.Tests/Protocol/RepairCoordinatorTests.cs": {
+    "mtime": 1784915855.7804437,
+    "ast_hash": "9dee8fffc8bc1a14fdfd25083c3247a3",
+    "semantic_hash": "9dee8fffc8bc1a14fdfd25083c3247a3"
+  },
+  "tests/Castr.Core.Tests/Security/PathSafetyTests.cs": {
+    "mtime": 1784932550.526376,
+    "ast_hash": "ace41c3abdfadb8703df08e067ec6960",
+    "semantic_hash": "ace41c3abdfadb8703df08e067ec6960"
+  },
+  "tests/Castr.Core.Tests/Security/PublicKeyIdTests.cs": {
+    "mtime": 1784914883.1473165,
+    "ast_hash": "25ebe34f0e2a7da3a4e476f2a7bb52f4",
+    "semantic_hash": "25ebe34f0e2a7da3a4e476f2a7bb52f4"
+  },
+  "tests/Castr.Core.Tests/TestSupport/FilteringMulticastTransport.cs": {
+    "mtime": 1784916080.0600276,
+    "ast_hash": "2593ccedc46c9a9b4e85128aaa20d815",
+    "semantic_hash": "2593ccedc46c9a9b4e85128aaa20d815"
+  },
+  "tests/Castr.Core.Tests/Transport/InMemoryNetworkTests.cs": {
+    "mtime": 1784915506.5555916,
+    "ast_hash": "6239ca7959d1bb637a1ec9ed47ea6585",
+    "semantic_hash": "6239ca7959d1bb637a1ec9ed47ea6585"
+  },
+  "tests/Castr.Core.Tests/Transport/UdpUnicastTransportTests.cs": {
+    "mtime": 1784915635.8927321,
+    "ast_hash": "f1ddb9b51cd08f88b75bbcd68d87fe34",
+    "semantic_hash": "f1ddb9b51cd08f88b75bbcd68d87fe34"
+  },
+  "tests/Castr.Core.Tests/Trust/FileTrustStoreTests.cs": {
+    "mtime": 1784932550.527531,
+    "ast_hash": "9be79e11dcbc7b30e48e5c82acdc20e7",
+    "semantic_hash": "9be79e11dcbc7b30e48e5c82acdc20e7"
+  },
+  "tests/Castr.Core.Tests/Trust/TrustDecisionEngineTests.cs": {
+    "mtime": 1784915010.9571483,
+    "ast_hash": "475813427011651ac3d33d9647dd0060",
+    "semantic_hash": "475813427011651ac3d33d9647dd0060"
+  },
+  "tests/Castr.Core.Tests/Trust/TrustSeedMergerTests.cs": {
+    "mtime": 1784915023.0679865,
+    "ast_hash": "7b4aa080727e2b783f5f7a0a04d09c55",
+    "semantic_hash": "7b4aa080727e2b783f5f7a0a04d09c55"
+  },
+  "tests/Castr.Core.Tests/Trust/TrustStoreJsonCodecTests.cs": {
+    "mtime": 1784932550.528621,
+    "ast_hash": "4c248c52af6faab978bbc585bc0c8551",
+    "semantic_hash": "4c248c52af6faab978bbc585bc0c8551"
+  },
+  "trusted-senders.seed.json": {
+    "mtime": 1784912895.7145102,
+    "ast_hash": "db032c9769c6906a813bec3f9a806fdd",
+    "semantic_hash": "db032c9769c6906a813bec3f9a806fdd"
+  },
+  ".github/workflows/ci.yml": {
+    "mtime": 1784935066.629421,
+    "ast_hash": "4392b79e59a958b28afde97718cbf059",
+    "semantic_hash": "4392b79e59a958b28afde97718cbf059"
+  },
+  "CLAUDE.md": {
+    "mtime": 1784913003.138665,
+    "ast_hash": "b7263178153a90953a38db00bdd87f4c",
+    "semantic_hash": "b7263178153a90953a38db00bdd87f4c"
+  },
+  "README.md": {
+    "mtime": 1784952581.305119,
+    "ast_hash": "74877005ec55336999926f73d3d8fa1f",
+    "semantic_hash": "74877005ec55336999926f73d3d8fa1f"
+  },
+  "raw/2026-07-24-castr-project-plan.md": {
+    "mtime": 1784913010.5214128,
+    "ast_hash": "230a5898a83c4e459132bbdf2a51d30d",
+    "semantic_hash": "230a5898a83c4e459132bbdf2a51d30d"
+  },
+  "wiki/.page-template.md": {
+    "mtime": 1784912966.636923,
+    "ast_hash": "fd73679d915dbdec9ee3cebcf4d12f7c",
+    "semantic_hash": "fd73679d915dbdec9ee3cebcf4d12f7c"
+  },
+  "wiki/SCHEMA.md": {
+    "mtime": 1784912992.5171645,
+    "ast_hash": "069f47d0e5acf831c2633aee847741d6",
+    "semantic_hash": "069f47d0e5acf831c2633aee847741d6"
+  },
+  "wiki/concepts/repair-protocol.md": {
+    "mtime": 1784952527.5391796,
+    "ast_hash": "84445a2ccf8274b18b83259ed56a53f8",
+    "semantic_hash": "84445a2ccf8274b18b83259ed56a53f8"
+  },
+  "wiki/concepts/security-model.md": {
+    "mtime": 1784952510.5503669,
+    "ast_hash": "d1f1bc408c26d1bcc28cf849507dd36d",
+    "semantic_hash": "d1f1bc408c26d1bcc28cf849507dd36d"
+  },
+  "wiki/concepts/tech-stack.md": {
+    "mtime": 1784952559.2202868,
+    "ast_hash": "6453f5d506e8e1aaf97b00d3cd9ff844",
+    "semantic_hash": "6453f5d506e8e1aaf97b00d3cd9ff844"
+  },
+  "wiki/concepts/wire-protocol.md": {
+    "mtime": 1784952478.2525954,
+    "ast_hash": "7ea528a016db94b7c29c0e9cdd333f4d",
+    "semantic_hash": "7ea528a016db94b7c29c0e9cdd333f4d"
+  },
+  "wiki/entities/castr-project.md": {
+    "mtime": 1784913067.028467,
+    "ast_hash": "f127a0438b781ec65d5bf22c1e444c5b",
+    "semantic_hash": "f127a0438b781ec65d5bf22c1e444c5b"
+  },
+  "wiki/graph/README.md": {
+    "mtime": 1784912966.6607072,
+    "ast_hash": "29bf5062f5dd7fdd0442f6aa61f3312a",
+    "semantic_hash": "29bf5062f5dd7fdd0442f6aa61f3312a"
+  },
+  "wiki/graph/ontology.yaml": {
+    "mtime": 1784912966.6495001,
+    "ast_hash": "0a7c4d66cd03de6fc2f154034ebeb732",
+    "semantic_hash": "0a7c4d66cd03de6fc2f154034ebeb732"
+  },
+  "wiki/index.md": {
+    "mtime": 1784952597.1532562,
+    "ast_hash": "f4570e0eaca1db96368dfad09939ecdf",
+    "semantic_hash": "f4570e0eaca1db96368dfad09939ecdf"
+  },
+  "wiki/log.md": {
+    "mtime": 1784952733.6872547,
+    "ast_hash": "5066af7a9ce548aeeb97ed3cbb22e8f5",
+    "semantic_hash": "5066af7a9ce548aeeb97ed3cbb22e8f5"
+  },
+  "wiki/sources/castr-project-plan.md": {
+    "mtime": 1784913054.9250972,
+    "ast_hash": "7fa26cfd5296f5eaca607e8b55065578",
+    "semantic_hash": "7fa26cfd5296f5eaca607e8b55065578"
+  },
+  "wiki/synthesis/adr-0001-ed25519-library.md": {
+    "mtime": 1784913655.704994,
+    "ast_hash": "cb95387bc0034ba49b8c4921cf1e8a56",
+    "semantic_hash": "cb95387bc0034ba49b8c4921cf1e8a56"
+  },
+  "wiki/synthesis/adr-0002-mobile-discovery.md": {
+    "mtime": 1784913674.7525527,
+    "ast_hash": "e6467d7b0201ab20b04ae841b1b7ca95",
+    "semantic_hash": "e6467d7b0201ab20b04ae841b1b7ca95"
+  },
+  "wiki/synthesis/m1-core-summary.md": {
+    "mtime": 1784920617.9207847,
+    "ast_hash": "ad6bc158d6e85703277f1c42ee871234",
+    "semantic_hash": "ad6bc158d6e85703277f1c42ee871234"
+  },
+  "wiki/synthesis/roadmap.md": {
+    "mtime": 1784952697.9440827,
+    "ast_hash": "b0620acdcf1a217b6eaf26162b9ce7b4",
+    "semantic_hash": "b0620acdcf1a217b6eaf26162b9ce7b4"
+  },
+  "src/Castr.Core/Security/ContentKey.cs": {
+    "mtime": 1784919560.4311483,
+    "ast_hash": "c1d2d0bff1c9ffa8d70043c58c591471",
+    "semantic_hash": "c1d2d0bff1c9ffa8d70043c58c591471"
+  },
+  "src/Castr.Core/Security/ContentKeyWrap.cs": {
+    "mtime": 1784919581.9806497,
+    "ast_hash": "26433175e953581e9597286f908123af",
+    "semantic_hash": "26433175e953581e9597286f908123af"
+  },
+  "src/Castr.Core/Security/EncryptedChunkHasher.cs": {
+    "mtime": 1784919594.9917932,
+    "ast_hash": "dcd406161130982d341464f783b6cbbb",
+    "semantic_hash": "dcd406161130982d341464f783b6cbbb"
+  },
+  "src/Castr.Core/Security/EncryptionKeys.cs": {
+    "mtime": 1784919537.4149342,
+    "ast_hash": "21a4a0ee0b7bb954d785e39972b48ac0",
+    "semantic_hash": "21a4a0ee0b7bb954d785e39972b48ac0"
+  },
+  "tests/Castr.Core.Tests/Security/PayloadEncryptionTests.cs": {
+    "mtime": 1784920121.9574983,
+    "ast_hash": "69b37d8336949f2d0150255d8e351799",
+    "semantic_hash": "69b37d8336949f2d0150255d8e351799"
+  },
+  "wiki/synthesis/adr-0003-payload-encryption.md": {
+    "mtime": 1784918321.777259,
+    "ast_hash": "cdf5a489a34505866aeb0a76bd2a1c90",
+    "semantic_hash": "cdf5a489a34505866aeb0a76bd2a1c90"
+  },
+  "wiki/synthesis/m1.5-encryption-summary.md": {
+    "mtime": 1784920576.3561745,
+    "ast_hash": "31e8aac014e44c1096d40a98fca7918c",
+    "semantic_hash": "31e8aac014e44c1096d40a98fca7918c"
+  },
+  "src/Castr.Cli/CastrCli.cs": {
+    "mtime": 1784923619.6170697,
+    "ast_hash": "79b94d3efd5d0742c8990b068f667ed2",
+    "semantic_hash": "79b94d3efd5d0742c8990b068f667ed2"
+  },
+  "src/Castr.Cli/CastrPaths.cs": {
+    "mtime": 1784932550.4999883,
+    "ast_hash": "3592c9076c891113737f8cf67bd4457b",
+    "semantic_hash": "3592c9076c891113737f8cf67bd4457b"
+  },
+  "src/Castr.Cli/ConsoleProgressReporter.cs": {
+    "mtime": 1784923464.5538974,
+    "ast_hash": "e8eea8d77f25853a224c3083ee868f34",
+    "semantic_hash": "e8eea8d77f25853a224c3083ee868f34"
+  },
+  "src/Castr.Cli/ConsoleTrustPrompt.cs": {
+    "mtime": 1784923478.8835483,
+    "ast_hash": "50c5698752d1f20d9743320b74407aec",
+    "semantic_hash": "50c5698752d1f20d9743320b74407aec"
+  },
+  "src/Castr.Cli/ExitCodes.cs": {
+    "mtime": 1784923417.858329,
+    "ast_hash": "17574f1e90a791c730356e0e7d342b78",
+    "semantic_hash": "17574f1e90a791c730356e0e7d342b78"
+  },
+  "src/Castr.Cli/NetworkInterfaces.cs": {
+    "mtime": 1784923453.7439818,
+    "ast_hash": "17803a2251f66a02ccf551c5eb779253",
+    "semantic_hash": "17803a2251f66a02ccf551c5eb779253"
+  },
+  "src/Castr.Cli/ReceiveRunner.cs": {
+    "mtime": 1784923540.0644317,
+    "ast_hash": "899ace4fc9e740337cfba8ecbe21341d",
+    "semantic_hash": "899ace4fc9e740337cfba8ecbe21341d"
+  },
+  "src/Castr.Cli/SendRunner.cs": {
+    "mtime": 1784932550.5010805,
+    "ast_hash": "e188684287289e3a2ab178a32f6ca41b",
+    "semantic_hash": "e188684287289e3a2ab178a32f6ca41b"
+  },
+  "src/Castr.Cli/SenderIdentity.cs": {
+    "mtime": 1784923429.6546354,
+    "ast_hash": "aa8bfb27329d55cc620e2033556a2630",
+    "semantic_hash": "aa8bfb27329d55cc620e2033556a2630"
+  },
+  "src/Castr.Cli/TransferPreparation.cs": {
+    "mtime": 1784923442.8638542,
+    "ast_hash": "cb78eadd024d032d9cd440d8d1b094c2",
+    "semantic_hash": "cb78eadd024d032d9cd440d8d1b094c2"
+  },
+  "src/Castr.Cli/TrustRunner.cs": {
+    "mtime": 1784923562.3745325,
+    "ast_hash": "72b830d9e5b24e7854c452278308231e",
+    "semantic_hash": "72b830d9e5b24e7854c452278308231e"
+  },
+  "src/Castr.Cli/TrustStoreBootstrap.cs": {
+    "mtime": 1784923488.2828064,
+    "ast_hash": "c2b341f19b2deb598e89f03125ac8c58",
+    "semantic_hash": "c2b341f19b2deb598e89f03125ac8c58"
+  },
+  "src/Castr.Core/Protocol/TransferProgress.cs": {
+    "mtime": 1784921963.801997,
+    "ast_hash": "8dd86b137c1afac55d716974b9cbeab0",
+    "semantic_hash": "8dd86b137c1afac55d716974b9cbeab0"
+  },
+  "src/Castr.Core/Trust/ITrustPrompt.cs": {
+    "mtime": 1784921975.4923813,
+    "ast_hash": "93ecfd72ef664319df68e6a3156d2770",
+    "semantic_hash": "93ecfd72ef664319df68e6a3156d2770"
+  },
+  "src/Castr.Gui.Desktop/Castr.Gui.Desktop.csproj": {
+    "mtime": 1784922851.2739975,
+    "ast_hash": "798c40267206c0e975610bb74cff24fb",
+    "semantic_hash": "798c40267206c0e975610bb74cff24fb"
+  },
+  "src/Castr.Gui.Desktop/Program.cs": {
+    "mtime": 1784922861.5877705,
+    "ast_hash": "d1dddf3d9545d716f43c4dc521088fab",
+    "semantic_hash": "d1dddf3d9545d716f43c4dc521088fab"
+  },
+  "src/Castr.Gui/App.axaml.cs": {
+    "mtime": 1784923138.2706158,
+    "ast_hash": "9444b4f7a0313fea42d8acad1487f446",
+    "semantic_hash": "9444b4f7a0313fea42d8acad1487f446"
+  },
+  "src/Castr.Gui/Castr.Gui.csproj": {
+    "mtime": 1784951647.7955065,
+    "ast_hash": "aa4edc670b70ec6fa4964b11dcbef76c",
+    "semantic_hash": "aa4edc670b70ec6fa4964b11dcbef76c"
+  },
+  "src/Castr.Gui/Services/CastrIdentity.cs": {
+    "mtime": 1784922881.612174,
+    "ast_hash": "48b76c0235d90efce3a6c0c828c2e557",
+    "semantic_hash": "48b76c0235d90efce3a6c0c828c2e557"
+  },
+  "src/Castr.Gui/Services/ITransportFactory.cs": {
+    "mtime": 1784922869.781968,
+    "ast_hash": "77a01e92cfd11b94156e8dd1ee14487c",
+    "semantic_hash": "77a01e92cfd11b94156e8dd1ee14487c"
+  },
+  "src/Castr.Gui/Services/InMemoryTransportFactory.cs": {
+    "mtime": 1784923087.8888829,
+    "ast_hash": "cdd4071a315ef2db9b561b3834b050ea",
+    "semantic_hash": "cdd4071a315ef2db9b561b3834b050ea"
+  },
+  "src/Castr.Gui/Services/StoragePickers.cs": {
+    "mtime": 1784923230.2774417,
+    "ast_hash": "c30bdfd111e0d4ccb89fcd1e1bdee422",
+    "semantic_hash": "c30bdfd111e0d4ccb89fcd1e1bdee422"
+  },
+  "src/Castr.Gui/Services/TransferBuilder.cs": {
+    "mtime": 1784922895.6980376,
+    "ast_hash": "7d3175c02fae34b474b8484cbd29d3e4",
+    "semantic_hash": "7d3175c02fae34b474b8484cbd29d3e4"
+  },
+  "src/Castr.Gui/Services/UdpTransportFactory.cs": {
+    "mtime": 1784923232.132645,
+    "ast_hash": "aa171dfb7da27720b92a8ed87ea7e841",
+    "semantic_hash": "aa171dfb7da27720b92a8ed87ea7e841"
+  },
+  "src/Castr.Gui/Trust/AutoTrustPrompt.cs": {
+    "mtime": 1784923090.866569,
+    "ast_hash": "4881042942b55e6a53463405b5b4db56",
+    "semantic_hash": "4881042942b55e6a53463405b5b4db56"
+  },
+  "src/Castr.Gui/Trust/DialogTrustPrompt.cs": {
+    "mtime": 1784922967.3091524,
+    "ast_hash": "e551c1bb9cae9f720f945f56b77d2e0f",
+    "semantic_hash": "e551c1bb9cae9f720f945f56b77d2e0f"
+  },
+  "src/Castr.Gui/ViewLocator.cs": {
+    "mtime": 1784922659.093948,
+    "ast_hash": "be22bd5e9aada0526ab9f7b7ecd8c574",
+    "semantic_hash": "be22bd5e9aada0526ab9f7b7ecd8c574"
+  },
+  "src/Castr.Gui/ViewModels/MainViewModel.cs": {
+    "mtime": 1784923101.3823178,
+    "ast_hash": "3e08dddc520d831263a97122d1ab34e9",
+    "semantic_hash": "3e08dddc520d831263a97122d1ab34e9"
+  },
+  "src/Castr.Gui/ViewModels/ReceiveViewModel.cs": {
+    "mtime": 1784923068.5800464,
+    "ast_hash": "237261fe399f5245027d9146336f1f73",
+    "semantic_hash": "237261fe399f5245027d9146336f1f73"
+  },
+  "src/Castr.Gui/ViewModels/SendViewModel.cs": {
+    "mtime": 1784923020.9681387,
+    "ast_hash": "93e7c8f85adfba4c4dada492aed26316",
+    "semantic_hash": "93e7c8f85adfba4c4dada492aed26316"
+  },
+  "src/Castr.Gui/ViewModels/TransferProgressViewModel.cs": {
+    "mtime": 1784922924.2705266,
+    "ast_hash": "8f5b29c5704db24928f0038c97ce0921",
+    "semantic_hash": "8f5b29c5704db24928f0038c97ce0921"
+  },
+  "src/Castr.Gui/ViewModels/TrustPromptViewModel.cs": {
+    "mtime": 1784922937.1262891,
+    "ast_hash": "af51c6447d93938d5eac708a5cb3c55f",
+    "semantic_hash": "af51c6447d93938d5eac708a5cb3c55f"
+  },
+  "src/Castr.Gui/ViewModels/ViewModelBase.cs": {
+    "mtime": 1784922659.0976174,
+    "ast_hash": "2038a31f0c9cbc6592c69346c2e87496",
+    "semantic_hash": "2038a31f0c9cbc6592c69346c2e87496"
+  },
+  "src/Castr.Gui/Views/MainWindow.axaml.cs": {
+    "mtime": 1784922659.1006434,
+    "ast_hash": "82bf142a3911506359dc51ae73250f2b",
+    "semantic_hash": "82bf142a3911506359dc51ae73250f2b"
+  },
+  "src/Castr.Gui/Views/TrustPromptDialog.axaml.cs": {
+    "mtime": 1784923178.6041572,
+    "ast_hash": "838316ae884694fe094291dffb15c2e8",
+    "semantic_hash": "838316ae884694fe094291dffb15c2e8"
+  },
+  "src/Castr.Tui/ChunkHeatmap.cs": {
+    "mtime": 1784922759.690817,
+    "ast_hash": "5913a973464f3a23f0bb1bf57af79c84",
+    "semantic_hash": "5913a973464f3a23f0bb1bf57af79c84"
+  },
+  "src/Castr.Tui/ThroughputSampler.cs": {
+    "mtime": 1784922741.471119,
+    "ast_hash": "c017053a692658564a2a95a220b484eb",
+    "semantic_hash": "c017053a692658564a2a95a220b484eb"
+  },
+  "src/Castr.Tui/TransferDashboard.cs": {
+    "mtime": 1784932550.5101383,
+    "ast_hash": "2e705993fc1702d1e63df0d3bd9f2e2b",
+    "semantic_hash": "2e705993fc1702d1e63df0d3bd9f2e2b"
+  },
+  "src/Castr.Tui/TransferDashboardRenderer.cs": {
+    "mtime": 1784922782.995929,
+    "ast_hash": "36eef4f9dc5396e7dc165fddc770be5e",
+    "semantic_hash": "36eef4f9dc5396e7dc165fddc770be5e"
+  },
+  "tests/Castr.Cli.Tests/ChunkSizeValidationTests.cs": {
+    "mtime": 1784932550.5101383,
+    "ast_hash": "5525a69e2029b2c5da3d2a0888e98ac1",
+    "semantic_hash": "5525a69e2029b2c5da3d2a0888e98ac1"
+  },
+  "tests/Castr.Cli.Tests/ConsoleTrustPromptTests.cs": {
+    "mtime": 1784923930.33931,
+    "ast_hash": "b16faf86b3da2af1f21607afd344742d",
+    "semantic_hash": "b16faf86b3da2af1f21607afd344742d"
+  },
+  "tests/Castr.Cli.Tests/EndToEndLoopbackTests.cs": {
+    "mtime": 1784923953.746359,
+    "ast_hash": "23743dc47276aab8b305919b54f0c3ee",
+    "semantic_hash": "23743dc47276aab8b305919b54f0c3ee"
+  },
+  "tests/Castr.Cli.Tests/ParsingTests.cs": {
+    "mtime": 1784923884.1190035,
+    "ast_hash": "f9e3d69628ebce5180546405815eadd7",
+    "semantic_hash": "f9e3d69628ebce5180546405815eadd7"
+  },
+  "tests/Castr.Cli.Tests/TrustCommandTests.cs": {
+    "mtime": 1784923898.7422755,
+    "ast_hash": "d6a431f372b8f44f7d66cb1e2ff5079c",
+    "semantic_hash": "d6a431f372b8f44f7d66cb1e2ff5079c"
+  },
+  "tests/Castr.Core.Tests/Protocol/TrustPromptAndProgressTests.cs": {
+    "mtime": 1784932550.5246952,
+    "ast_hash": "3abad5937917f69d1ce1e773d8f359ca",
+    "semantic_hash": "3abad5937917f69d1ce1e773d8f359ca"
+  },
+  "tests/Castr.Gui.Tests/Castr.Gui.Tests.csproj": {
+    "mtime": 1784951647.8189268,
+    "ast_hash": "4b9e650ad9ce19a089b0eb035e5b3a7e",
+    "semantic_hash": "4b9e650ad9ce19a089b0eb035e5b3a7e"
+  },
+  "tests/Castr.Gui.Tests/MainWindowTests.cs": {
+    "mtime": 1784923339.1366677,
+    "ast_hash": "7e87f961d763c967efa86eee47721ef5",
+    "semantic_hash": "7e87f961d763c967efa86eee47721ef5"
+  },
+  "tests/Castr.Gui.Tests/TestAppBuilder.cs": {
+    "mtime": 1784923309.5068626,
+    "ast_hash": "cc477c2636fc9d63a1aafc27baa60356",
+    "semantic_hash": "cc477c2636fc9d63a1aafc27baa60356"
+  },
+  "tests/Castr.Gui.Tests/TransferFlowTests.cs": {
+    "mtime": 1784923372.02681,
+    "ast_hash": "9e5ece2a9fbafe65bea887c6ea9881b7",
+    "semantic_hash": "9e5ece2a9fbafe65bea887c6ea9881b7"
+  },
+  "tests/Castr.Gui.Tests/TrustPromptTests.cs": {
+    "mtime": 1784923351.3433392,
+    "ast_hash": "3423a8e35c345665526415eca02b79e9",
+    "semantic_hash": "3423a8e35c345665526415eca02b79e9"
+  },
+  "tests/Castr.Tui.Tests/Castr.Tui.Tests.csproj": {
+    "mtime": 1784922837.7337515,
+    "ast_hash": "a07e2520215ad0a4e90c7460d0b0652c",
+    "semantic_hash": "a07e2520215ad0a4e90c7460d0b0652c"
+  },
+  "tests/Castr.Tui.Tests/TransferDashboardEndToEndTests.cs": {
+    "mtime": 1784923098.9573753,
+    "ast_hash": "2b8081f6cbfb7de671dd3e70e1bf9252",
+    "semantic_hash": "2b8081f6cbfb7de671dd3e70e1bf9252"
+  },
+  "tests/Castr.Tui.Tests/TransferDashboardLoopTests.cs": {
+    "mtime": 1784922908.893504,
+    "ast_hash": "4578aae055d67bfd35374d42c2710b94",
+    "semantic_hash": "4578aae055d67bfd35374d42c2710b94"
+  },
+  "tests/Castr.Tui.Tests/TransferDashboardRendererTests.cs": {
+    "mtime": 1784922855.6497524,
+    "ast_hash": "ddb72929ea83e7d03b4ea1b9a4b99a2b",
+    "semantic_hash": "ddb72929ea83e7d03b4ea1b9a4b99a2b"
+  },
+  "src/Castr.Gui/README.md": {
+    "mtime": 1784923201.165197,
+    "ast_hash": "0b283340e638c045d6cce1d8b613ef04",
+    "semantic_hash": "0b283340e638c045d6cce1d8b613ef04"
+  },
+  "wiki/synthesis/m2-ui-summary.md": {
+    "mtime": 1784924739.9071102,
+    "ast_hash": "cbc9e69350d7dae8878fd4094bfdea7f",
+    "semantic_hash": "cbc9e69350d7dae8878fd4094bfdea7f"
+  },
+  "src/Castr.Core/Protocol/ChunkPacketAssembler.cs": {
+    "mtime": 1784932550.5010805,
+    "ast_hash": "51148ae9998970109b546621d593784b",
+    "semantic_hash": "51148ae9998970109b546621d593784b"
+  },
+  "src/Castr.Core/Protocol/ChunkPacketizer.cs": {
+    "mtime": 1784932550.5010805,
+    "ast_hash": "743ac58ee18ba03930175698e6e04eb6",
+    "semantic_hash": "743ac58ee18ba03930175698e6e04eb6"
+  },
+  "src/Castr.Core/Protocol/PacketReassembler.cs": {
+    "mtime": 1784932550.5051782,
+    "ast_hash": "b483df06c08c5e32c1b504438b9ac9a3",
+    "semantic_hash": "b483df06c08c5e32c1b504438b9ac9a3"
+  },
+  "src/Castr.Core/Protocol/WirePacketizer.cs": {
+    "mtime": 1784932550.5073922,
+    "ast_hash": "5401146d95e914f22480b85f85bd147b",
+    "semantic_hash": "5401146d95e914f22480b85f85bd147b"
+  },
+  "tests/Castr.Core.E2ETests/Infrastructure/CastrClusterFixture.cs": {
+    "mtime": 1784932550.5141249,
+    "ast_hash": "d5faf362ec235627250a7d570b1431e2",
+    "semantic_hash": "d5faf362ec235627250a7d570b1431e2"
+  },
+  "tests/Castr.Core.E2ETests/Infrastructure/CastrFanOut.cs": {
+    "mtime": 1784932550.5144274,
+    "ast_hash": "f9cee923020189c262ae29eddf7b3648",
+    "semantic_hash": "f9cee923020189c262ae29eddf7b3648"
+  },
+  "tests/Castr.Core.E2ETests/Infrastructure/E2EFactAttribute.cs": {
+    "mtime": 1784932550.5144274,
+    "ast_hash": "66df58b05f4ddc61bda59dbd0348f465",
+    "semantic_hash": "66df58b05f4ddc61bda59dbd0348f465"
+  },
+  "tests/Castr.Core.E2ETests/Infrastructure/SenderIdentityFactory.cs": {
+    "mtime": 1784932550.5144274,
+    "ast_hash": "416f2d28ac1f9543ed313611d18d143c",
+    "semantic_hash": "416f2d28ac1f9543ed313611d18d143c"
+  },
+  "tests/Castr.Core.E2ETests/MulticastFanOutE2ETests.cs": {
+    "mtime": 1784932550.5144274,
+    "ast_hash": "7e32e5beb2746492994b9a292fc5c804",
+    "semantic_hash": "7e32e5beb2746492994b9a292fc5c804"
+  },
+  "tests/Castr.Core.IntegrationTests/LargeChunkTransferTests.cs": {
+    "mtime": 1784932550.517615,
+    "ast_hash": "5b7f592d46b9d017b9e34afcc5393f43",
+    "semantic_hash": "5b7f592d46b9d017b9e34afcc5393f43"
+  },
+  "tests/Castr.Core.Tests/Protocol/ChunkPacketizerTests.cs": {
+    "mtime": 1784932550.5207443,
+    "ast_hash": "ac25ed4a463b03931876fa1f4bc3c1e8",
+    "semantic_hash": "ac25ed4a463b03931876fa1f4bc3c1e8"
+  },
+  "tests/Castr.Core.Tests/Protocol/ReceiverSessionIndexHardeningTests.cs": {
+    "mtime": 1784932550.5235615,
+    "ast_hash": "9515ff7c947239efa6679c3d88c14e5a",
+    "semantic_hash": "9515ff7c947239efa6679c3d88c14e5a"
+  },
+  "tests/Castr.Core.Tests/Protocol/WirePacketizerTests.cs": {
+    "mtime": 1784932550.525199,
+    "ast_hash": "001189746c6501aaab05d40805c709ca",
+    "semantic_hash": "001189746c6501aaab05d40805c709ca"
+  },
+  "tests/Castr.Core.Tests/Security/ChunkPositionBindingTests.cs": {
+    "mtime": 1784951647.8148077,
+    "ast_hash": "663971c5358bc1773cee838d4b49bd28",
+    "semantic_hash": "663971c5358bc1773cee838d4b49bd28"
+  },
+  "tests/Castr.Core.E2ETests/README.md": {
+    "mtime": 1784932550.517615,
+    "ast_hash": "524d39196ad26f28f8dc86ef64b053e0",
+    "semantic_hash": "524d39196ad26f28f8dc86ef64b053e0"
+  },
+  "wiki/synthesis/m3-test-ci-hardening-summary.md": {
+    "mtime": 1784932913.92093,
+    "ast_hash": "f378e0bf39749ba6e8009d4eef6874b8",
+    "semantic_hash": "f378e0bf39749ba6e8009d4eef6874b8"
+  },
+  "src/Castr.Core.Discovery/DiscoveredPeer.cs": {
+    "mtime": 1784951647.7460258,
+    "ast_hash": "3edec8682de6089fdb595add0f1d00e5",
+    "semantic_hash": "3edec8682de6089fdb595add0f1d00e5"
+  },
+  "src/Castr.Core.Discovery/IServiceDiscovery.cs": {
+    "mtime": 1784951647.7480342,
+    "ast_hash": "4ea20fdaadc53d262e43773b854a7ab8",
+    "semantic_hash": "4ea20fdaadc53d262e43773b854a7ab8"
+  },
+  "src/Castr.Core.Discovery/InMemory/InMemoryDiscoveryNetwork.cs": {
+    "mtime": 1784951647.7480342,
+    "ast_hash": "31745dab2b0067e849cc937f2eeb923d",
+    "semantic_hash": "31745dab2b0067e849cc937f2eeb923d"
+  },
+  "src/Castr.Core.Discovery/InMemory/InMemoryServiceDiscovery.cs": {
+    "mtime": 1784951647.750611,
+    "ast_hash": "87cac38a834d0b4ea6f25e9eef56c87d",
+    "semantic_hash": "87cac38a834d0b4ea6f25e9eef56c87d"
+  },
+  "src/Castr.Core.Discovery/Platforms/NetworkServiceDiscovery.iOS.cs": {
+    "mtime": 1784951647.750611,
+    "ast_hash": "2aa51e7d763ab32ac62afdc2fdaa1d47",
+    "semantic_hash": "2aa51e7d763ab32ac62afdc2fdaa1d47"
+  },
+  "src/Castr.Core.Discovery/Platforms/NsdServiceDiscovery.Android.cs": {
+    "mtime": 1784951647.7521174,
+    "ast_hash": "a6da9a6dda13ca90f78a3624eb594c15",
+    "semantic_hash": "a6da9a6dda13ca90f78a3624eb594c15"
+  },
+  "src/Castr.Core/Protocol/LengthPrefixedFramer.cs": {
+    "mtime": 1784951647.756144,
+    "ast_hash": "f1634779de952c8b994e96a272016862",
+    "semantic_hash": "f1634779de952c8b994e96a272016862"
+  },
+  "src/Castr.Core/Swarm/ISwarmContentSource.cs": {
+    "mtime": 1784951647.76493,
+    "ast_hash": "b7a19ee62a2aa7bada255842c20cb644",
+    "semantic_hash": "b7a19ee62a2aa7bada255842c20cb644"
+  },
+  "src/Castr.Core/Swarm/SwarmPullSession.cs": {
+    "mtime": 1784951647.7669406,
+    "ast_hash": "eb2c63424704ae6a49ace134ba61ee4c",
+    "semantic_hash": "eb2c63424704ae6a49ace134ba61ee4c"
+  },
+  "src/Castr.Core/Swarm/SwarmServeListener.cs": {
+    "mtime": 1784951647.768262,
+    "ast_hash": "1fbb3f80607457d27f07037cb2200aae",
+    "semantic_hash": "1fbb3f80607457d27f07037cb2200aae"
+  },
+  "src/Castr.Core/Transport/IStreamClient.cs": {
+    "mtime": 1784951647.769237,
+    "ast_hash": "d33a84ceddc66dc9c3523c5bb522676f",
+    "semantic_hash": "d33a84ceddc66dc9c3523c5bb522676f"
+  },
+  "src/Castr.Core/Transport/IStreamConnection.cs": {
+    "mtime": 1784951647.769237,
+    "ast_hash": "1a015b8bb132cc340eb87cde5b28a6f3",
+    "semantic_hash": "1a015b8bb132cc340eb87cde5b28a6f3"
+  },
+  "src/Castr.Core/Transport/IStreamListener.cs": {
+    "mtime": 1784951647.7705622,
+    "ast_hash": "7428ec0159243bf0353fa168e673d355",
+    "semantic_hash": "7428ec0159243bf0353fa168e673d355"
+  },
+  "src/Castr.Core/Transport/InMemory/InMemoryStreamNetwork.cs": {
+    "mtime": 1784951647.7705622,
+    "ast_hash": "825200b628e5be4f2d70db852ddad00f",
+    "semantic_hash": "825200b628e5be4f2d70db852ddad00f"
+  },
+  "src/Castr.Core/Transport/Tcp/TcpStreamClient.cs": {
+    "mtime": 1784951647.774364,
+    "ast_hash": "ad733f5b2c3e4b80e574f483bcec412b",
+    "semantic_hash": "ad733f5b2c3e4b80e574f483bcec412b"
+  },
+  "src/Castr.Core/Transport/Tcp/TcpStreamConnection.cs": {
+    "mtime": 1784951647.774364,
+    "ast_hash": "dbc096dde602c81843c92a46bd5159b7",
+    "semantic_hash": "dbc096dde602c81843c92a46bd5159b7"
+  },
+  "src/Castr.Core/Transport/Tcp/TcpStreamListener.cs": {
+    "mtime": 1784951647.77559,
+    "ast_hash": "1b2d9159631bcbbd04ae9e0dcd985c32",
+    "semantic_hash": "1b2d9159631bcbbd04ae9e0dcd985c32"
+  },
+  "src/Castr.Core/Trust/ManifestAdmission.cs": {
+    "mtime": 1784951647.7768843,
+    "ast_hash": "c152d1a03888a2787eb43b836df9acb4",
+    "semantic_hash": "c152d1a03888a2787eb43b836df9acb4"
+  },
+  "src/Castr.Gui.Android/App.axaml.cs": {
+    "mtime": 1784951647.7799726,
+    "ast_hash": "e560f823d14fbc0d3e2f02c23abc9c0c",
+    "semantic_hash": "e560f823d14fbc0d3e2f02c23abc9c0c"
+  },
+  "src/Castr.Gui.Android/Castr.Gui.Android.csproj": {
+    "mtime": 1784951647.7813132,
+    "ast_hash": "ca94ef3d8c4bd640eb6aacaed11e041f",
+    "semantic_hash": "ca94ef3d8c4bd640eb6aacaed11e041f"
+  },
+  "src/Castr.Gui.Android/MainActivity.cs": {
+    "mtime": 1784951647.7824295,
+    "ast_hash": "78cd8f0e5f0f787797f39fd1dde6becd",
+    "semantic_hash": "78cd8f0e5f0f787797f39fd1dde6becd"
+  },
+  "src/Castr.Gui.Android/MainApplication.cs": {
+    "mtime": 1784951647.7824295,
+    "ast_hash": "8aa9fc487be593be996c1ab926e83e69",
+    "semantic_hash": "8aa9fc487be593be996c1ab926e83e69"
+  },
+  "src/Castr.Gui.iOS/App.axaml.cs": {
+    "mtime": 1784951647.7889125,
+    "ast_hash": "5449065932e99a3ce5d2bf791e209ce3",
+    "semantic_hash": "5449065932e99a3ce5d2bf791e209ce3"
+  },
+  "src/Castr.Gui.iOS/AppDelegate.cs": {
+    "mtime": 1784951647.7889125,
+    "ast_hash": "081b9d06db25dd0514921fd2eb25bdd1",
+    "semantic_hash": "081b9d06db25dd0514921fd2eb25bdd1"
+  },
+  "src/Castr.Gui.iOS/Castr.Gui.iOS.csproj": {
+    "mtime": 1784951647.7909174,
+    "ast_hash": "08b5fe6cd0fa05a7ddbcc2100486d13e",
+    "semantic_hash": "08b5fe6cd0fa05a7ddbcc2100486d13e"
+  },
+  "src/Castr.Gui.iOS/Main.cs": {
+    "mtime": 1784951647.793924,
+    "ast_hash": "cecd32a8672a27c1c89892c958493b7b",
+    "semantic_hash": "cecd32a8672a27c1c89892c958493b7b"
+  },
+  "src/Castr.Gui/ViewModels/InAppTrustPrompt.cs": {
+    "mtime": 1784951647.7975109,
+    "ast_hash": "89cff865d6f2a884e36c3263657e7cec",
+    "semantic_hash": "89cff865d6f2a884e36c3263657e7cec"
+  },
+  "src/Castr.Gui/ViewModels/MobileReceiveViewModel.cs": {
+    "mtime": 1784951647.7975109,
+    "ast_hash": "dcce233deddbf365d15d09cf0acec948",
+    "semantic_hash": "dcce233deddbf365d15d09cf0acec948"
+  },
+  "src/Castr.Gui/ViewModels/SwarmReceiveViewModel.cs": {
+    "mtime": 1784951647.7995155,
+    "ast_hash": "3ae31f3aa5a0c67026e084f9a73378db",
+    "semantic_hash": "3ae31f3aa5a0c67026e084f9a73378db"
+  },
+  "src/Castr.Gui/Views/MobileReceiveView.axaml.cs": {
+    "mtime": 1784951647.801522,
+    "ast_hash": "d410ee24a03e62edde902798160620de",
+    "semantic_hash": "d410ee24a03e62edde902798160620de"
+  },
+  "src/Castr.Gui/Views/SwarmReceiveView.axaml.cs": {
+    "mtime": 1784951647.801522,
+    "ast_hash": "7df1df4167e747973bf6e3723891fb75",
+    "semantic_hash": "7df1df4167e747973bf6e3723891fb75"
+  },
+  "tests/Castr.Core.Discovery.Tests/Castr.Core.Discovery.Tests.csproj": {
+    "mtime": 1784951647.8035293,
+    "ast_hash": "7fb12dd978240429f0d47f63a3b8360a",
+    "semantic_hash": "7fb12dd978240429f0d47f63a3b8360a"
+  },
+  "tests/Castr.Core.Discovery.Tests/DiscoveredPeerTests.cs": {
+    "mtime": 1784951647.8035293,
+    "ast_hash": "20f05952a8b23064d28e71e87744329a",
+    "semantic_hash": "20f05952a8b23064d28e71e87744329a"
+  },
+  "tests/Castr.Core.Discovery.Tests/InMemoryServiceDiscoveryTests.cs": {
+    "mtime": 1784951647.8055348,
+    "ast_hash": "d6de245c78463aa2e2f30acaeb913b79",
+    "semantic_hash": "d6de245c78463aa2e2f30acaeb913b79"
+  },
+  "tests/Castr.Core.Discovery.Tests/ServiceTypeTests.cs": {
+    "mtime": 1784951647.8055348,
+    "ast_hash": "8620ef6907f48116546bd9164b192132",
+    "semantic_hash": "8620ef6907f48116546bd9164b192132"
+  },
+  "tests/Castr.Core.IntegrationTests/RealTcpSwarmPullTests.cs": {
+    "mtime": 1784951647.8075397,
+    "ast_hash": "39f6060146600d824a676f9a0e8d21d8",
+    "semantic_hash": "39f6060146600d824a676f9a0e8d21d8"
+  },
+  "tests/Castr.Core.Tests/Protocol/LengthPrefixedFramerTests.cs": {
+    "mtime": 1784951647.810982,
+    "ast_hash": "8b459f7051a7e52e185ad94690925bcd",
+    "semantic_hash": "8b459f7051a7e52e185ad94690925bcd"
+  },
+  "tests/Castr.Core.Tests/Protocol/PeerTableDiscoveryTests.cs": {
+    "mtime": 1784951647.8132937,
+    "ast_hash": "1c83162e9e489c3a533fea296be15ccf",
+    "semantic_hash": "1c83162e9e489c3a533fea296be15ccf"
+  },
+  "tests/Castr.Core.Tests/Swarm/SwarmPullSessionTests.cs": {
+    "mtime": 1784951647.816669,
+    "ast_hash": "f6b737671ae4a1787f53d841e8900a6c",
+    "semantic_hash": "f6b737671ae4a1787f53d841e8900a6c"
+  },
+  "tests/Castr.Core.Tests/Transport/InMemoryStreamNetworkTests.cs": {
+    "mtime": 1784951647.816669,
+    "ast_hash": "b697587b8a44330b837411c848bee500",
+    "semantic_hash": "b697587b8a44330b837411c848bee500"
+  },
+  "tests/Castr.Gui.Tests/MobileReceiveFlowTests.cs": {
+    "mtime": 1784951647.8189268,
+    "ast_hash": "5d15cca293b74292cff07e35e2c0a3b6",
+    "semantic_hash": "5d15cca293b74292cff07e35e2c0a3b6"
+  },
+  "tests/Castr.Gui.Tests/SwarmReceiveFlowTests.cs": {
+    "mtime": 1784951647.8189268,
+    "ast_hash": "40fbcbf163c016cb79d66a439e4c3256",
+    "semantic_hash": "40fbcbf163c016cb79d66a439e4c3256"
+  },
+  ".github/workflows/ci-mobile-android.yml": {
+    "mtime": 1784951647.7406607,
+    "ast_hash": "c470cb3bd1b23c8e430c9c8426b8c807",
+    "semantic_hash": "c470cb3bd1b23c8e430c9c8426b8c807"
+  },
+  ".github/workflows/ci-mobile-ios.yml": {
+    "mtime": 1784951647.7422779,
+    "ast_hash": "959d271ef83190e6920681919fcf3d28",
+    "semantic_hash": "959d271ef83190e6920681919fcf3d28"
+  },
+  "wiki/synthesis/m4-mobile-summary.md": {
+    "mtime": 1784952676.6946523,
+    "ast_hash": "7829ef7f6a71b2e6638d291683becaba",
+    "semantic_hash": "7829ef7f6a71b2e6638d291683becaba"
+  }
+}
