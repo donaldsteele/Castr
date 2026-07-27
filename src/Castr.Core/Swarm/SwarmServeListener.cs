@@ -11,23 +11,60 @@ namespace Castr.Core.Swarm;
 /// for peer-serving leaves that session's multicast behavior untouched.
 /// </summary>
 /// <remarks>
-/// Every request/response rides <see cref="LengthPrefixedFramer"/>, which bounds the accepted frame size —
+/// <para>Every request/response rides <see cref="LengthPrefixedFramer"/>, which bounds the accepted frame size —
 /// a peer cannot force an unbounded allocation with a crafted length prefix. A malformed frame, an
-/// over-limit prefix, or a decode failure simply drops that one connection; other peers are unaffected.
+/// over-limit prefix, or a decode failure simply drops that one connection; other peers are unaffected.</para>
+/// <para><b>Two bounds on the accept loop itself.</b> Finished connection tasks are pruned rather than retained
+/// for the life of the listener, and at most <see cref="DefaultMaxConcurrentConnections"/> are served at once.
+/// Without the first, a long-lived listener kept one <see cref="Task"/> per connection ever accepted — a leak
+/// proportional to uptime, not to load. Without the second there was no ceiling on concurrent handlers at all,
+/// and each one holds a frame buffer and can be mid-chunk-serve. The cap is applied <i>before</i>
+/// <see cref="IStreamListener.AcceptAsync"/>, so excess dials wait in the transport's own backlog instead of
+/// being accepted and then starved — real backpressure rather than a queue this class would have to bound.</para>
 /// </remarks>
 public sealed class SwarmServeListener(
     IStreamListener listener,
     ISwarmContentSource source,
-    int maxFrameLength = LengthPrefixedFramer.DefaultMaxFrameLength)
+    int maxFrameLength = LengthPrefixedFramer.DefaultMaxFrameLength,
+    int maxConcurrentConnections = SwarmServeListener.DefaultMaxConcurrentConnections)
 {
+    /// <summary>
+    /// Default ceiling on connections served at once. Sized for what a swarm participant is: peers pull whole
+    /// chunks over a point-to-point stream, so a handler's cost is one frame buffer plus at most one chunk read
+    /// in flight. 64 is far above the handful of peers a real LAN swarm produces and far below anything that
+    /// would matter for memory.
+    /// </summary>
+    public const int DefaultMaxConcurrentConnections = 64;
+
+    private int _tracked;
+
+    /// <summary>
+    /// Connection tasks currently retained by the accept loop. Diagnostics and tests only — this is what the
+    /// pruning bound is expressed in, so it is worth being able to assert on directly.
+    /// </summary>
+    public int TrackedConnectionCount => Volatile.Read(ref _tracked);
+
     /// <summary>Accepts connections until cancelled, handling each concurrently. Never throws for a single peer's misbehavior.</summary>
     public async Task RunAsync(CancellationToken cancellationToken)
     {
+        if (maxConcurrentConnections <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxConcurrentConnections));
+
+        using var slots = new SemaphoreSlim(maxConcurrentConnections, maxConcurrentConnections);
         var connections = new List<Task>();
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
+                try
+                {
+                    await slots.WaitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+
                 IStreamConnection connection;
                 try
                 {
@@ -35,15 +72,42 @@ public sealed class SwarmServeListener(
                 }
                 catch (OperationCanceledException)
                 {
+                    slots.Release();
                     break;
                 }
 
-                connections.Add(HandleConnectionAsync(connection, cancellationToken));
+                connections.Add(ServeAsync(connection, slots, cancellationToken));
+                Prune(connections);
             }
         }
         finally
         {
             await Task.WhenAll(connections).ConfigureAwait(false);
+            Volatile.Write(ref _tracked, 0);
+        }
+    }
+
+    /// <summary>
+    /// Drops finished connection tasks. Only <b>successfully</b> completed ones: a faulted task is kept so the
+    /// <c>Task.WhenAll</c> in <see cref="RunAsync"/>'s finally still surfaces it, which is the behaviour this
+    /// class had before pruning existed. <see cref="HandleConnectionAsync"/> swallows everything a peer can
+    /// cause, so a fault here means a defect and losing it silently would be worse than retaining a task.
+    /// </summary>
+    private void Prune(List<Task> connections)
+    {
+        connections.RemoveAll(t => t.IsCompletedSuccessfully);
+        Volatile.Write(ref _tracked, connections.Count);
+    }
+
+    private async Task ServeAsync(IStreamConnection connection, SemaphoreSlim slots, CancellationToken ct)
+    {
+        try
+        {
+            await HandleConnectionAsync(connection, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            slots.Release();
         }
     }
 
