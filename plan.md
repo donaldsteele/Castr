@@ -6,7 +6,7 @@ This file is deliberately thin. **`wiki/synthesis/roadmap.md` is the source of t
 every measurement, every review round, every earned rule lives there or in
 `docs/benchmarks/throughput-runs.md`. This page links into them and does not restate them.
 
-Last reconciled against `main` at `c4a899b` on 2026-07-27.
+Last reconciled against `main` at `14f1d8d` on 2026-07-27 (M12a).
 
 ---
 
@@ -27,9 +27,10 @@ Last reconciled against `main` at `c4a899b` on 2026-07-27.
 | M9 | Packetization efficiency | 309 → 184 datagrams/chunk, **1.41×**; a stranded-chunk defect found + fixed | `wiki/synthesis/m9-datagram-efficiency.md` |
 | M10 | Bounded receiver chunk cache | Peak private bytes 2,461.7 → 93.3 MB; cold rebuild path moved off `_stateGate` | `c4a899b`; run log |
 | M11 | Clear the small backlog | All ten items, one commit each; wire keyed by byte offset, `FormatVersion` 1 → 2 | `wiki/synthesis/m11-backlog-clearance.md` |
+| M12a | Fan-out measurement | Real baseline: 3 receivers cost **16%**, not 41%; amplification **1.029× flat** (5.08× withdrawn); receiver ceiling **≥150k datagrams/s** | `wiki/synthesis/m12a-fanout-baseline.md` |
 
-Tree state: **538 tests, 0 warnings** under `-warnaserror`, Docker netem E2E tier green **and run
-in-loop**, `main` clean.
+Tree state: **545 tests discovered** (542 executed plus 3 Docker-gated E2E), **0 warnings** under
+`-warnaserror`, Docker netem E2E tier green **and run in-loop**, `main` clean.
 
 ### The throughput programme is closed
 
@@ -86,22 +87,56 @@ control that stayed green against a mutated `BuildNonce` was not a control at al
 
 ### M12 — Fan-out scaling
 
-The product's headline claim — *"one send, hundreds of receivers"* — and the least-validated axis in
-the codebase. Split so the protocol work is designed against real numbers rather than stale ones.
+The product's headline claim — *"one send, hundreds of receivers"* — and, until M12a, the least-validated
+axis in the codebase. Split so the protocol work is designed against real numbers rather than stale ones,
+and the split paid: **M12a withdrew one of the two figures M12b was scoped against.**
 
-**M12a — measurement only.** Establish a real multi-receiver baseline. The figures currently quoted
-(3 receivers at 8.01 MB/s against 13.65 at one, 5.08× wire amplification) are **loopback and
-pre-M9/M10**, and the 5.08× row comes from the withdrawn 60,000-byte-datagram configuration — it does
-not describe shipped code. Also measure the receiver's sustained datagram ceiling, which several
-decisions depend on and which does not exist as a number today. No protocol change in this stage.
+#### M12a — measurement only — ✅ **COMPLETE (2026-07-27)**
 
-**M12b — protocol.** `CAROUSEL_STATUS` (tag 16) and `SECTION_REPORT` (tag 17), per
+Write-up: `wiki/synthesis/m12a-fanout-baseline.md`. Harness: `tools/bench/` (committed and reproducible —
+the M8/M9 sniffer never was). Raw CSVs: `tools/bench/results/`.
+
+- **[x] A real multi-receiver goodput baseline.** Real wire, 100 MiB, warm, interleaved, n=3 arms, every
+  arm hash-verified per receiver: **10.163 / 9.955 / 8.545 / 6.167 MB/s at 1 / 2 / 3 / 5 receivers.**
+  Three receivers cost **16%**, not the 41% the stale 8.01-vs-13.65 pair implied. The single-receiver row
+  reproduces the 2026-07-26 wire measurement to 0.4%.
+- **[x] Wire amplification against receiver count.** **1.029×, flat from one receiver to five — the 5.08×
+  figure is withdrawn.** `CHUNK_PACKET` = 73,600 in every arm (400 × 184, M9's prediction exact on both
+  paths), `CHUNK_REQUEST` and `CHUNK_RESPONSE` zero, `PEER_HAVE` linear at ~61 per receiver and 0.4% of the
+  wire at five. The sender emits identical traffic regardless of audience, so **the goodput curve is not
+  paid for on the wire.**
+- **[x] The receiver's sustained datagram ceiling.** **≥150,000 datagrams/s (210 MB/s) at 0.000% loss;
+  ≥185,000/s (260 MB/s) at ≤0.10%** — a lower bound, the *sender* ran out first. Castr asks 7,479/s of it
+  on the wire, so **≥20× headroom**; M12b should not spend effort on the receive path.
+- **[x] Root-cause the fan-out curve.** It is the kernel's inline multicast copy on the *sending* host,
+  `latency ≈ 5.1 + 25.0·N µs` (linear to 4%), which becomes lost goodput only because
+  `DefaultSendWindowSize = 1` makes throughput exactly 1/latency. The host's copy budget (137k–175k
+  copies/s) is 10–14% used. **This is a same-host property a switch does not have** — recorded as a
+  diagnosis, not as a recommendation to raise the send window, which keeps its own gate.
+
+Not reached, and stated rather than buried: **every receiver was on the sender's own machine.** A real
+multi-host fan-out being near flat is a *prediction* consistent with the protocol-side evidence, not a
+measurement. It joins the existing deferred item below — a dumb gigabit switch, or a second host.
+
+One defect fell out and was fixed (`b61fcaa`): `FileSessionRegistry`'s fixed temp-file name made two of
+three same-host receivers hang at 0/0 chunks with nothing logged. M11 added that code and its tests all
+passed; the defect is invisible to any single-process test.
+
+#### M12b — protocol
+
+`CAROUSEL_STATUS` (tag 16) and `SECTION_REPORT` (tag 17), per
 `wiki/synthesis/proposal-section-based-repair.md` **as amended by the architecture review**: a
 *cumulative monotone heartbeat, not an edge event* — an edge event re-creates the "never reached vs.
 finished" conflation that produced both M7 liveness bugs. New message types are additively
 backward-safe (unknown tags throw and both sessions swallow); appending a field to an existing type is
 not. Write and review the design before implementing — both prior defects here were design errors that
 survived code review. Expect 3–5 review rounds; this is the most defect-dense area in the system.
+
+**M12a changed this stage's premise and the proposal has to be rewritten before it is implemented.** It
+cannot be justified by amplification any more: measured amplification is 1.029× and does not move with
+receiver count, and repair traffic is zero at N ≤ 5 on a lossless segment. The remaining case is the one
+the architecture review already made — deleting the "never reached vs. finished" bug class — plus
+behaviour under real loss and at receiver counts an order of magnitude beyond one host. Lead with that.
 
 ### M13 — Release automation
 

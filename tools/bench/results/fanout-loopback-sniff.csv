@@ -1,0 +1,5 @@
+﻿"Repeat","ReceiverCount","WallSeconds","GoodputMBps","AggregateMBps","Complete","ExitCodes","HashesMatched","Interface","Group","ChunkSize","SizeBytes","SniffDatagrams","SniffPayloadB","SniffEthernetB","WireAmplification","SniffChunkPacket","SniffPeerHave","SniffChunkReq","SniffChunkResp","SniffFragment"
+"1","1","6.14","16.287","16.287","True","","1","Loopback Pseudo-Interface 1","239.192.58.11","262144","104857600","73626","107859876","112719192","1.0286","73600","22",,,
+"1","2","9.125","10.959","21.918","True","|","2","Loopback Pseudo-Interface 1","239.192.58.11","262144","104857600","73672","107864340","112726692","1.0287","73600","66",,,
+"1","3","11.66","8.576","25.729","True","||","3","Loopback Pseudo-Interface 1","239.192.58.11","262144","104857600","73737","107870666","112737308","1.0287","73600","129",,,
+"1","5","16.411","6.093","30.467","True","||||","5","Loopback Pseudo-Interface 1","239.192.58.11","262144","104857600","73919","107888370","112767024","1.0289","73600","305",,,

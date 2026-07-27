@@ -1468,3 +1468,199 @@ Practical rules, which supersede "reboot clears it":
 The underlying asymmetry is worth stating plainly: **a leaked join makes transfers look faster, never
 slower.** So this class of error always flatters the result, which is exactly the direction that survives
 review unchallenged.
+
+## 2026-07-27 — M12a: the real multi-receiver fan-out baseline, and the receiver's datagram ceiling
+
+M12a is measurement only — no protocol change. It exists because the fan-out figures this project has been
+quoting are not describable as shipped code: **3 receivers at 8.01 MB/s against 13.65 at one, and 5.08× wire
+amplification.** Those are loopback, pre-M9, pre-M10, and the 5.08× row comes from the withdrawn
+60,000-byte-datagram configuration. Designing `SECTION_REPORT` against them would be designing against a
+regime that does not exist.
+
+All of it is reproducible now. The harness is committed at `tools/bench/` (see its README); the raw CSVs are
+under `tools/bench/results/`. Earlier campaigns' "passive external sniffer" was never committed, so an M8/M9
+composition row could be quoted but not re-run — that gap is closed.
+
+**Environment.** Windows 11, 12 cores, Realtek 2.5GbE at 1 Gbps link, the same host as every other row in
+this file. `--interface` forced explicitly on every process in every arm. Group `239.192.58.11:45059`, chosen
+because nothing had leaked a membership on it. 100 MiB payload, 256 KiB chunks, 1472-byte datagram budget —
+the shipped defaults. Warm, interleaved, three repeats per arm, and **every arm asserts both the receiver's
+own "transfer complete." line and a byte-identical SHA-256 per receiver**. 12/12 arms passed on each path.
+
+### Goodput against receiver count — the number that replaces 8.01/13.65
+
+**Ethernet (real wire), 100 MiB, n=3 arms per row:**
+
+| Receivers | mean wall | min | max | goodput/receiver | vs 1 receiver | aggregate delivered |
+|---|---|---|---|---|---|---|
+| 1 | 9.841 s | 9.69 | 9.92 | **10.163 MB/s** | 1.000 | 10.16 MB/s |
+| 2 | 10.055 s | 9.65 | 10.38 | 9.955 MB/s | **0.980** | 19.91 MB/s |
+| 3 | 11.706 s | 11.45 | 11.95 | 8.545 MB/s | **0.841** | 25.64 MB/s |
+| 5 | 16.223 s | 15.70 | 16.50 | 6.167 MB/s | **0.607** | 30.84 MB/s |
+
+**Loopback, same payload and schedule:**
+
+| Receivers | mean wall | min | max | goodput/receiver | vs 1 receiver | aggregate delivered |
+|---|---|---|---|---|---|---|
+| 1 | 4.370 s | 4.34 | 4.40 | **22.886 MB/s** | 1.000 | 22.89 MB/s |
+| 2 | 7.470 s | 7.35 | 7.64 | 13.391 MB/s | **0.585** | 26.78 MB/s |
+| 3 | 10.146 s | 9.89 | 10.39 | 9.860 MB/s | **0.431** | 29.58 MB/s |
+| 5 | 14.770 s | 14.67 | 14.94 | 6.771 MB/s | **0.296** | 33.86 MB/s |
+
+The single-receiver Ethernet row reproduces the 2026-07-26 wire measurement (10.2 MB/s) to within 0.4%, which
+is the cheapest available check that this harness measures the same thing the previous one did.
+
+**Three receivers now cost 16% of goodput, not 41%.** The old 8.01/13.65 = 0.587 ratio is superseded by 0.841
+on the wire. The stale number was not merely old; it was measured in a configuration that no longer exists.
+
+### The wire is flat. Amplification does not grow with receiver count at all
+
+Passive read-only sniffer, one lossless arm per point. The sniffer links against nothing in `src/` and knows
+only the two-byte `[FormatVersion][MessageType]` prefix.
+
+| Path | Receivers | total datagrams | `CHUNK_PACKET` | `PEER_HAVE` | `CHUNK_REQUEST` | `CHUNK_RESPONSE` | wire amplification |
+|---|---|---|---|---|---|---|---|
+| loopback | 1 | 73,626 | **73,600** | 22 | **0** | **0** | **1.0286×** |
+| loopback | 2 | 73,672 | **73,600** | 66 | **0** | **0** | 1.0287× |
+| loopback | 3 | 73,737 | **73,600** | 129 | **0** | **0** | 1.0287× |
+| loopback | 5 | 73,919 | **73,600** | 305 | **0** | **0** | 1.0289× |
+| Ethernet | 1 | 73,637 | **73,600** | 33 | **0** | **0** | 1.0286× |
+| Ethernet | 5 | 73,827 | **73,600** | 215 | **0** | **0** | 1.0288× |
+
+`CHUNK_PACKET` is **73,600 in every single arm** — 400 chunks × 184 datagrams, M9's prediction, exact at every
+receiver count on both paths. Not one chunk was retransmitted. `CHUNK_REQUEST` and `CHUNK_RESPONSE` are
+**zero everywhere**: at these receiver counts, on a lossless segment, the repair path never engages.
+
+**The 5.08× wire-amplification figure is therefore formally withdrawn.** Measured amplification is 1.029× at
+one receiver and 1.029× at five — flat to the fourth decimal. `PEER_HAVE` grows roughly linearly at ~61
+datagrams per receiver (M7's coalescing holds at fan-out) and is 0.4% of the wire at five receivers. The
+residue (4 datagrams at n=1, 14 at n=5) is `MANIFEST` + per-receiver `JOIN_REQUEST`/`KEY_GRANT` +
+`TRANSFER_COMPLETE`.
+
+So the goodput curve above is **not** paid for on the wire. The sender emits the same datagrams regardless of
+how many receivers are listening. Whatever fan-out costs, it costs somewhere else.
+
+### Where it actually goes: the same-host kernel copy, times a serialized send window
+
+Every extra receiver **on this host** is another inline multicast copy the kernel performs inside the
+sender's `sendto`. Measured directly, single sender thread, unpaced, interleaved, n=3:
+
+| Local receivers | datagrams/s (1 thread) | µs per `SendTo` |
+|---|---|---|
+| 1 | 33,363 | **30.13** |
+| 2 | 18,653 | 53.70 |
+| 3 | 13,007 | 76.97 |
+| 5 | 7,678 | **130.27** |
+
+Linear to within 4%: **`latency ≈ 5.1 + 25.0·N µs`**. Per extra local receiver: 25.0 µs per datagram, i.e.
+73,600 × 25.0 µs = **1.84 s per receiver per 100 MiB**.
+
+Against the measured marginal cost from the tables above (least squares over N): **loopback 2.57 s/receiver,
+Ethernet 1.68 s/receiver.** The kernel copy alone accounts for essentially all of the Ethernet fan-out cost
+and ~72% of the loopback one.
+
+And the host is nowhere near saturated while this happens. Aggregate delivered copies per second, four
+blasting threads:
+
+| Local receivers | offered datagrams/s | aggregate copies/s |
+|---|---|---|
+| 1 | 137,278 | 137,278 |
+| 2 | 76,687 | 153,375 |
+| 3 | 53,055 | 159,164 |
+| 5 | 33,594 | 167,969 |
+| 8 | 21,827 | 174,616 |
+
+Roughly conserved: the host delivers ~137k–175k datagram-copies/s no matter how they are divided. Castr at
+one receiver on loopback runs at 16,842 datagrams/s, and at five receivers at 24,900 copies/s — **10–14% of
+the host's copy budget.**
+
+**That is the sharp finding. The same-host fan-out cost is per-send *latency*, not bandwidth, and it converts
+into lost goodput only because `SenderSession.DefaultSendWindowSize` is 1, so the sender's throughput is
+exactly 1/latency.** Four threads reach 137k datagrams/s on the same host where one thread reaches 33k.
+Nothing in the protocol, the wire, or the receivers is the constraint here.
+
+This is deliberately recorded as a diagnosis, **not** as a recommendation to raise the default send window.
+That decision has its own gate (independent cross-machine real-LAN validation), and the shared-gate
+double-counting caveat from M6 round 2 still applies. What M12a establishes is only that the same-host
+fan-out curve is a *host* property with a known mechanism, so it must not be read as a protocol result.
+
+### The limit this measurement does not reach
+
+**Every receiver here is on the sender's own machine.** A switch does not behave like this: one frame leaves
+the sender and the switch replicates it across ports, so the sender's per-datagram cost does not grow with
+receiver count at all. The protocol-side evidence — identical `CHUNK_PACKET` counts, flat 1.029×
+amplification, zero repair traffic — is consistent with a real multi-host fan-out being close to flat, and
+**that remains a prediction, not a measurement.** It joins the existing gating item: this programme needs a
+dumb gigabit switch or a second host.
+
+### The receiver's sustained datagram ceiling — a number that did not exist
+
+Several decisions have depended on it. `castr-dgram drain` stands up a real `UdpMulticastTransport` — the
+shipped socket options, the shipped reader task, the shipped bounded inbox, the shipped per-datagram copy —
+and does nothing with each datagram but count it. Loss comes from sequence stamps in the payload, because
+`netstat -s -p udp` reports **0** receive errors on Windows while hundreds of thousands of datagrams are
+being dropped (re-confirmed here).
+
+1472-byte datagrams, 20 s per arm, six blasting threads, two repeats:
+
+| Target rate | offered/s | drained/s | MB/s | loss |
+|---|---|---|---|---|
+| 100,000 | 99,953 / 99,944 | 99,983 / 99,978 | 140.4 | **0.000% / 0.000%** |
+| 150,000 | 149,882 / 149,851 | 149,945 / 149,962 | 210.5 | **0.000% / 0.000%** |
+| 200,000 | 175,653 / 174,851 | 175,636 / 174,869 | 246.6 | 0.020% / 0.000% |
+| 250,000 | 182,206 / 185,238 | 182,195 / 185,072 | 259.8 | 0.021% / 0.100% |
+
+**The drain sustained every rate the sender could offer.** Read it as a lower bound, not a ceiling:
+**≥150,000 datagrams/s (210 MB/s) at 0.000% loss, and ≥185,000 datagrams/s (260 MB/s) at ≤0.10%** — above
+that the *sender* runs out, not the receiver.
+
+Against what Castr actually asks of it: a receiver on the wire sees 73,600 datagrams in 9.84 s = **7,479
+datagrams/s**, and 16,842/s on loopback. The transport read path has **≥20× headroom on the wire and ≥8.9× on
+loopback.** Whatever fan-out costs, it is not the receiver's socket drain, and M12b should not spend effort
+there.
+
+### What this does to M12b's premise
+
+`CAROUSEL_STATUS` / `SECTION_REPORT` can no longer be justified by "3 receivers measure 5.08× amplification."
+Measured amplification is 1.029× and does not move with receiver count; repair traffic is zero at N ≤ 5 on a
+lossless segment. The remaining case for that work is the case the architecture review already made and which
+this data does not touch: **deleting the "never reached vs. finished" conflation that produced both M7
+liveness bugs**, plus behaviour under real loss and at receiver counts an order of magnitude larger than
+anything measurable on one host. That is a correctness argument, and it should be written as one.
+
+### A defect the harness found that review had not
+
+Two of three same-host receivers completed a transfer; the third verified a good manifest and then sat at
+"0/0 chunks" forever, logging nothing. Reproducible on a fresh group, and **not** a delivery problem — four
+independent sniffer sockets each counted identical datagram totals, which is what ruled out the transport and
+the kernel.
+
+`FileSessionRegistry.Save` wrote through a fixed `<path>.tmp`, and the registry path is derived from the trust
+store's *directory*, so concurrent receivers collided on that one temp name. `File.WriteAllText` threw
+`IOException` straight out of `Record`, which runs inside `ManifestAdmission` on the receive path, and the
+throw unwound manifest admission. Fixed in `b61fcaa`: process-id-plus-random temp name, and a persistence
+failure now degrades enforcement instead of failing the transfer. Two tests, mutation-verified.
+
+Worth naming the shape: **M11 added this code, M11's tests all passed, and the defect is invisible to any
+single-process test.** It took a second concurrent receiver to exist.
+
+### Methodology notes
+
+- **Absolutes drifted ~15–35% across this session; ratios did not.** Single-thread send rate at one receiver
+  measured 33k–63k datagrams/s at different points in the day, and the host copy budget measured 137k–221k.
+  Every comparative claim above therefore comes from an **interleaved** run, never from two runs an hour
+  apart. A blocked schedule would have turned this drift into a fake trend.
+- **`Start-Process -PassThru` plus output redirection returns a `Process` whose `ExitCode` is intermittently
+  unreadable** (null), and null is not 0, so an exit-code test silently reports good arms as failures.
+  `Measure-FanOut.ps1` asserts the receiver's own "transfer complete." line instead — which is the more direct
+  claim anyway.
+- **Mutation testing by backup-and-restore breaks incremental builds.** Restoring a file preserves its old
+  timestamp, MSBuild judges the assembly up to date, and the next test run silently exercises the *mutated*
+  binary. Costs a confusing half hour; touch the file after restoring.
+- **Receivers must be joined before the sender's first datagram**, and a fixed sleep is not enough — process
+  start plus JIT is variable and the failure is silent (the carousel is single-pass and there is no manifest
+  re-request path). The harness waits for each receiver's own listening line.
+- **Windows refuses a multicast `sendto` out the loopback pseudo-interface with `NetworkUnreachable` unless
+  the socket is also a group member.** `IP_MULTICAST_IF` alone is not enough, and binding to the interface's
+  own address instead of the wildcard makes it worse. The shipped transport never trips over this because it
+  always joins.

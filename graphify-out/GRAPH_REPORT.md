@@ -1,16 +1,16 @@
 # Graph Report - Castr  (2026-07-27)
 
 ## Corpus Check
-- 259 files · ~387,247 words
+- 267 files · ~399,424 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2924 nodes · 7220 edges · 181 communities (166 shown, 15 thin omitted)
-- Extraction: 92% EXTRACTED · 8% INFERRED · 0% AMBIGUOUS · INFERRED: 586 edges (avg confidence: 0.8)
+- 2998 nodes · 7325 edges · 182 communities (168 shown, 14 thin omitted)
+- Extraction: 92% EXTRACTED · 8% INFERRED · 0% AMBIGUOUS · INFERRED: 590 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `4e6530e1`
+- Built from commit: `14f1d8d7`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -189,12 +189,11 @@
 - .ReceiveAsync
 - ServiceTypeTests
 - ExitCodes.cs
-- Castr.Cli.Tests/TestPorts.cs
 
 ## God Nodes (most connected - your core abstractions)
 1. `ReceiverSession` - 75 edges
 2. `Castr.Core.Protocol` - 63 edges
-3. `Castr.Core.Transport` - 60 edges
+3. `Castr.Core.Transport` - 61 edges
 4. `Castr.Core.Chunking` - 59 edges
 5. `Castr.Core.Security` - 57 edges
 6. `Castr.Core.Trust` - 57 edges
@@ -228,22 +227,22 @@
 - **Castr core architecture concept cluster** — wiki_entities_castr_project_castr, wiki_concepts_repair_protocol_repair_protocol [EXTRACTED 1.00]
 - **Definition-of-done gate applied at every milestone** — raw_2026_07_24_castr_project_plan_milestones, raw_2026_07_24_castr_project_plan_graphify_llm_wiki_infra [EXTRACTED 1.00]
 
-## Communities (181 total, 15 thin omitted)
+## Communities (182 total, 14 thin omitted)
 
 ### Community 0 - "Swarm Pull Session & Protocol Messages"
 Cohesion: 0.06
-Nodes (38): SignedManifest, JoinRequestMessage, KeyGrantMessage, ReceiverContentSource, SenderContentSource, ISwarmContentSource, SwarmChunk, CancellationToken (+30 more)
+Nodes (39): SignedManifest, JoinRequestMessage, KeyGrantMessage, ReceiverContentSource, SenderContentSource, ValueTask, ISwarmContentSource, SwarmChunk (+31 more)
 
 ### Community 1 - "Merkle Verification & Message Codec"
-Cohesion: 0.27
-Nodes (4): MessageCodecTests, Fact, InlineData, Theory
+Cohesion: 0.06
+Nodes (27): SpanReader, MessageCodec, SpanReader, byte, int, ReadOnlySpan, Stream, AnnounceMessage (+19 more)
 
 ### Community 2 - "In-Memory Service Discovery"
 Cohesion: 0.08
 Nodes (34): IServiceDiscovery, SinkHolder, InMemoryDiscoveryNetwork, Action, ChannelReader, Dictionary, DiscoveredPeer, List (+26 more)
 
 ### Community 3 - "Content Key Encryption"
-Cohesion: 0.18
+Cohesion: 0.17
 Nodes (9): EncryptionKeys, int, Key, PayloadEncryptionTests, byte, Fact, InlineData, Task (+1 more)
 
 ### Community 4 - "Transport Interfaces & In-Memory Network"
@@ -251,8 +250,8 @@ Cohesion: 0.29
 Nodes (6): IUnicastTransport, IUnicastTransport, InMemoryNetworkTests, Fact, Task, TimeSpan
 
 ### Community 5 - "Sender Session Protocol"
-Cohesion: 0.12
-Nodes (19): MerkleTree, SenderSession, bool, CancellationToken, HashSet, int, long, object (+11 more)
+Cohesion: 0.06
+Nodes (37): CancellationToken, Task, MerkleTree, SenderSession, bool, CancellationToken, HashSet, int (+29 more)
 
 ### Community 6 - "Transfer Progress & Dashboard UI"
 Cohesion: 0.37
@@ -276,39 +275,39 @@ Nodes (17): ChunkAndLeafIndexSwappingTransport, ChunkPositionSwappingMulticastTr
 
 ### Community 11 - "Protocol & Swarm Module Overview"
 Cohesion: 0.14
-Nodes (6): Castr.Core.Transport, Castr.Core.Transport.InMemory, Castr.Core.Tests.Protocol, Castr.Core.Tests.TestSupport, Castr.Core.Protocol, Castr.Core.Tests.Transport
+Nodes (8): Castr.Tui.Tests, Castr.Core.Time, Castr.Core.Transport.InMemory, Castr.Core.Tests.Protocol, Castr.Core.Tests.TestSupport, Castr.Tui, Castr.Core.Protocol, Castr.Core.Tests.Swarm
 
 ### Community 12 - "Manifest Codec & Signing"
-Cohesion: 0.09
-Nodes (16): ManifestCodec, SpanReader, byte, ReadOnlySpan, Stream, ManifestLimits, int, TransferManifest (+8 more)
+Cohesion: 0.17
+Nodes (7): ManifestCodec, SpanReader, byte, ReadOnlySpan, Stream, ManifestCodecTests, Fact
 
 ### Community 13 - "Chunk Packetizer & Assembler"
-Cohesion: 0.23
-Nodes (9): Ciphertext, Proof, IReadOnlyList, ChunkPacketizerTests, byte, Fact, InlineData, int (+1 more)
+Cohesion: 0.18
+Nodes (14): OutboundRecorder, ChunkHash, IMulticastTransport, ReceiverSessionChunkCacheTests, Transfer, Ciphertext, Fact, Factory (+6 more)
 
 ### Community 14 - "In-Memory Stream Network"
 Cohesion: 0.12
 Nodes (19): InMemoryStreamClient, InMemoryStreamConnection, InMemoryStreamListener, InMemoryStreamNetwork, byte, CancellationToken, Channel, ChannelReader (+11 more)
 
 ### Community 15 - "CLI Command Definitions"
-Cohesion: 0.15
-Nodes (11): Command, Option, CastrCli, IAnsiConsole, IPAddress, RootCommand, TrustRunner, IAnsiConsole (+3 more)
+Cohesion: 0.14
+Nodes (11): Command, Option, CastrCli, IAnsiConsole, IPAddress, RootCommand, ParsingTests, Fact (+3 more)
 
 ### Community 16 - "Trust Prompt Implementations"
-Cohesion: 0.11
-Nodes (18): CancellationToken, Task, TrustPromptContext, AutoTrustPrompt, CancellationToken, Task, DialogTrustPrompt, CancellationToken (+10 more)
+Cohesion: 0.08
+Nodes (25): IFileSink, IReadableFileSink, CancellationToken, Memory, ReadOnlyMemory, ValueTask, MemoryFileSink, byte (+17 more)
 
 ### Community 17 - "Android NSD Discovery"
-Cohesion: 0.15
-Nodes (9): IDiscoveryListener, IRegistrationListener, IResolveListener, NsdFailure, NsdServiceInfo, Object, DiscoveryListener, RegistrationListener (+1 more)
+Cohesion: 0.09
+Nodes (18): DiscoveryListener, IDiscoveryListener, IRegistrationListener, IResolveListener, NsdFailure, NsdManager, NsdServiceInfo, Object (+10 more)
 
 ### Community 18 - "Packet Reassembler & Wire Packetizer"
 Cohesion: 0.12
 Nodes (13): PacketReassembler, Partial, byte, Dictionary, int, long, WirePacketizer, int (+5 more)
 
 ### Community 19 - "Real TCP Swarm Pull Tests"
-Cohesion: 0.14
-Nodes (7): Castr.Core.Swarm, Castr.Core.Time, Castr.Core.Transport.Tcp, Castr.Core.Discovery.InMemory, Castr.Core.Discovery.Tests, Castr.Core.Discovery, Castr.Core.Tests.Swarm
+Cohesion: 0.10
+Nodes (7): Castr.Core.Swarm, Castr.Core.Transport, Castr.Core.Transport.Tcp, Castr.Core.Discovery.InMemory, Castr.Core.Discovery.Tests, Castr.Core.Tests.Transport, Castr.Core.Discovery
 
 ### Community 20 - "GUI App Shell & ViewModels"
 Cohesion: 0.08
@@ -319,40 +318,40 @@ Cohesion: 0.27
 Nodes (8): ServedTransfer, SwarmReceiveFlowTests, AvaloniaFact, Factory, Func, GetSink, Key, Task
 
 ### Community 22 - "Mobile Receive ViewModel"
-Cohesion: 0.15
+Cohesion: 0.16
 Nodes (11): DiscoveredPeerItem, MobileReceiveViewModel, bool, CancellationToken, CancellationTokenSource, Func, HashSet, ObservableCollection (+3 more)
 
 ### Community 23 - "CLI Program Bootstrap & Paths"
-Cohesion: 0.11
-Nodes (9): Castr.Cli.Tests, Castr.Core.Trust, Castr.Cli, Castr.Core.Tests.Security, Castr.Core.Tests.Trust, Castr.Core.Security, ConsoleTrustPrompt, DatagramBudget (+1 more)
+Cohesion: 0.10
+Nodes (10): Castr.Cli.Tests, Castr.Core.Trust, Castr.Cli, Castr.Core.Tests.Security, Castr.Core.Tests.Trust, Castr.Core.Security, ConsoleTrustPrompt, DatagramBudget (+2 more)
 
 ### Community 24 - "Swarm Receive ViewModel"
-Cohesion: 0.16
-Nodes (12): DiscoveredPeer, SwarmReceiveViewModel, bool, byte, CancellationToken, CancellationTokenSource, Func, HashSet (+4 more)
+Cohesion: 0.14
+Nodes (13): DiscoveredPeer, SwarmPullSessionOptions, SwarmReceiveViewModel, bool, byte, CancellationToken, CancellationTokenSource, Func (+5 more)
 
 ### Community 25 - "M1.5 Concepts & Hardening Notes"
 Cohesion: 0.16
 Nodes (23): Castr.Cli --chunk-size fail-fast guard, ConsoleTrustPrompt, ContentKey.EncryptChunk, DialogTrustPrompt, InMemoryTransportFactory, ITransportFactory, ReceiverSession, SenderSession (+15 more)
 
 ### Community 26 - "SwarmPullSession Core Logic"
-Cohesion: 0.08
-Nodes (21): Chunk, File, HeldChunk, LinkedListNode, HeldChunk, SwarmPullSession, SwarmPullSessionOptions, byte (+13 more)
+Cohesion: 0.11
+Nodes (19): Chunk, File, HeldChunk, LinkedListNode, HeldChunk, SwarmPullSession, byte, CancellationToken (+11 more)
 
 ### Community 27 - "Chunk Bitmap"
 Cohesion: 0.16
 Nodes (7): ChunkBitmap, byte, IEnumerable, ChunkBitmapTests, Fact, InlineData, Theory
 
 ### Community 28 - "ChunkHash (Chunking)"
-Cohesion: 0.12
-Nodes (16): IEquatable, ChunkHash, byte, int, ReadOnlySpan, FileSessionRegistry, DateTimeOffset, string (+8 more)
+Cohesion: 0.18
+Nodes (7): IEquatable, ChunkHash, byte, int, ReadOnlySpan, SessionAdmission, DateTimeOffset
 
 ### Community 29 - "iOS App Shell"
 Cohesion: 0.22
 Nodes (5): AvaloniaAppDelegate, Castr.Gui.iOS, AppDelegate, AppBuilder, Application
 
 ### Community 30 - "Receiver Session Core"
-Cohesion: 0.10
-Nodes (23): PendingChunkServe, ChunkRequestMessage, CachedChunk, ChunkServeOutcome, ColdRebuild, PendingChunkServe, ReceiverSession, ReceiverSessionOptions (+15 more)
+Cohesion: 0.05
+Nodes (44): PendingChunkServe, MerkleProof, ChunkPacketAssembler, Partial, byte, Ciphertext, Dictionary, int (+36 more)
 
 ### Community 31 - "iOS NWBrowser Discovery"
 Cohesion: 0.13
@@ -363,8 +362,8 @@ Cohesion: 0.25
 Nodes (5): AvaloniaAndroidApplication, App, Control, MainApplication, AppBuilder
 
 ### Community 33 - "TUI Dashboard End-to-End Tests"
-Cohesion: 0.19
-Nodes (9): Transfer, TransferDashboardEndToEndTests, CancellationToken, Fact, Factory, Func, GetSink, Key (+1 more)
+Cohesion: 0.22
+Nodes (8): Transfer, TransferDashboardEndToEndTests, CancellationToken, Fact, Factory, Func, GetSink, Task
 
 ### Community 34 - "Desktop App Shell & Identity"
 Cohesion: 0.25
@@ -372,51 +371,51 @@ Nodes (4): IClassicDesktopStyleApplicationLifetime, App, CastrIdentity, Key
 
 ### Community 35 - "Repair Coordinator Planning Tests"
 Cohesion: 0.14
-Nodes (8): IReadOnlyCollection, RepairRequestPlan, Func, TimeSpan, RepairCoordinatorTests, DateTimeOffset, Fact, TimeSpan
+Nodes (9): IReadOnlyCollection, RepairRequestPlan, Func, IEnumerable, TimeSpan, RepairCoordinatorTests, DateTimeOffset, Fact (+1 more)
 
 ### Community 36 - "Receive ViewModel (Desktop)"
-Cohesion: 0.19
+Cohesion: 0.21
 Nodes (10): ReceiveViewModel, bool, CancellationToken, CancellationTokenSource, Func, int, IReadOnlyList, RelayCommand (+2 more)
 
 ### Community 37 - "Filesystem File Sink & Source"
-Cohesion: 0.06
-Nodes (31): Chunker, CancellationToken, Memory, Task, ValueTask, FileSystemFileSink, bool, CancellationToken (+23 more)
+Cohesion: 0.21
+Nodes (8): ReadOnlyMemory, CancellationToken, Memory, ValueTask, FileSystemFileSourceSinkTests, Fact, string, Task
 
 ### Community 38 - "Chunk Range & Layout"
 Cohesion: 0.18
 Nodes (8): ChunkLayout, ChunkRange, IEnumerable, int, ChunkLayoutTests, Fact, InlineData, Theory
 
 ### Community 39 - "Length-Prefixed Framer Stream Tests"
-Cohesion: 0.20
-Nodes (9): CancellationToken, Memory, ReadOnlyMemory, ValueTask, ChoppyConnection, CancellationToken, Memory, ReadOnlyMemory (+1 more)
+Cohesion: 0.15
+Nodes (12): CancellationToken, Memory, ValueTask, CancellationToken, Memory, ReadOnlyMemory, ValueTask, ChoppyConnection (+4 more)
 
 ### Community 40 - "CLI Parsing Tests"
-Cohesion: 0.26
-Nodes (5): ParsingTests, Fact, InlineData, RootCommand, Theory
+Cohesion: 0.09
+Nodes (19): Castr.Bench.Sniffer, JsonSerializerContext, BenchJsonContext, Options, Program, IPAddress, Options, string (+11 more)
 
 ### Community 41 - "Trust Decision Engine"
 Cohesion: 0.35
 Nodes (3): TrustDecisionEngine, TrustDecisionEngineTests, Fact
 
 ### Community 42 - "Security & Trust Test Namespaces"
-Cohesion: 0.17
-Nodes (10): ChunkHash, ReadOnlySpan, MerkleTreeTests, Fact, InlineData, Theory, ChunkPositionBindingTests, byte (+2 more)
+Cohesion: 0.19
+Nodes (9): ReadOnlySpan, MerkleTreeTests, Fact, InlineData, Theory, ChunkPositionBindingTests, byte, Fact (+1 more)
 
 ### Community 43 - "GUI Trust Prompt Dialog"
-Cohesion: 0.39
-Nodes (4): TrustPromptViewModel, RelayCommand, Task, TaskCompletionSource
+Cohesion: 0.18
+Nodes (9): ObservableObject, InAppTrustPrompt, CancellationToken, Task, TrustPromptViewModel, RelayCommand, Task, TaskCompletionSource (+1 more)
 
 ### Community 44 - "CLI Send & Chunk Size Validation"
 Cohesion: 0.27
 Nodes (8): SendRunner, CancellationToken, IAnsiConsole, Task, ChunkSizeValidationTests, Fact, string, Task
 
 ### Community 45 - "Length-Prefixed Framer & Pull Chunk Ops"
-Cohesion: 0.29
-Nodes (8): LengthPrefixedFramer, CancellationToken, int, Memory, ReadOnlyMemory, ValueTask, CancellationToken, Task
+Cohesion: 0.26
+Nodes (5): TrustRunner, IAnsiConsole, TrustCommandTests, Fact, string
 
 ### Community 46 - "PeerTable Discovery Integration"
 Cohesion: 0.20
-Nodes (6): IReadOnlyList, Endpoint, IPEndPoint, PeerTableDiscoveryTests, DateTimeOffset, Fact
+Nodes (6): IReadOnlyList, Endpoint, IStreamListener, PeerTableDiscoveryTests, DateTimeOffset, Fact
 
 ### Community 47 - "TUI Throughput Sampler & Send Runner"
 Cohesion: 0.25
@@ -427,8 +426,8 @@ Cohesion: 0.19
 Nodes (11): ISystemClock, SystemClock, DateTimeOffset, ITrustPrompt, CancellationToken, Task, ManifestAdmission, ManifestAdmissionResult (+3 more)
 
 ### Community 49 - "Manifest Signing Tests"
-Cohesion: 0.14
-Nodes (17): ManifestSigner, Key, ManifestVerifier, ManifestSigningTests, Fact, AlwaysAcceptPrompt, ServeHandle, SwarmPullSessionTests (+9 more)
+Cohesion: 0.09
+Nodes (26): ManifestLimits, int, ManifestSigner, Key, ManifestVerifier, TransferManifest, int, ManifestLimitsTests (+18 more)
 
 ### Community 50 - "Length-Prefixed Framer Tests"
 Cohesion: 0.40
@@ -455,7 +454,7 @@ Cohesion: 0.19
 Nodes (10): IUnicastTransport, InMemoryUnicastTransport, CancellationToken, Channel, ChannelWriter, Endpoint, IAsyncEnumerable, ReadOnlyMemory (+2 more)
 
 ### Community 56 - "Send ViewModel (Desktop)"
-Cohesion: 0.18
+Cohesion: 0.17
 Nodes (11): MainViewModel, int, SendViewModel, bool, CancellationTokenSource, Func, int, Key (+3 more)
 
 ### Community 57 - "Path Safety Tests"
@@ -463,12 +462,12 @@ Cohesion: 0.22
 Nodes (6): PathSafety, PathSafetyTests, Fact, InlineData, string, Theory
 
 ### Community 58 - "Network Interfaces & Path Safety"
-Cohesion: 0.20
-Nodes (7): Exception, InvalidInterfaceException, NetworkInterfaces, DatagramBudgetTooSmallException, TransferPreparation, PathTraversalException, PromptBoomException
+Cohesion: 0.21
+Nodes (9): Chunker, CancellationToken, Memory, Task, ValueTask, IFileSource, CancellationToken, Memory (+1 more)
 
 ### Community 59 - "UDP Unicast Transport"
-Cohesion: 0.18
-Nodes (11): UdpUnicastTransport, bool, CancellationToken, CancellationTokenSource, Channel, EndPoint, int, ReceivedPacket (+3 more)
+Cohesion: 0.16
+Nodes (13): Endpoint, UdpUnicastTransport, bool, CancellationToken, CancellationTokenSource, Channel, EndPoint, int (+5 more)
 
 ### Community 60 - "Trust Store JSON Codec"
 Cohesion: 0.28
@@ -479,32 +478,36 @@ Cohesion: 0.16
 Nodes (9): ReceiveOptions, SendOptions, DatagramSizeValidationTests, Fact, InlineData, RootCommand, string, Task (+1 more)
 
 ### Community 62 - "IPeerTable Interface"
-Cohesion: 0.23
+Cohesion: 0.21
 Nodes (6): IPeerTable, PeerInfo, DateTimeOffset, int, IReadOnlyList, IReadOnlyList
 
 ### Community 63 - "PeerTable Implementation"
-Cohesion: 0.22
-Nodes (5): MessageType, DatagramFiltersTests, Fact, InlineData, Theory
+Cohesion: 0.27
+Nodes (7): FileSystemFileSink, bool, CancellationToken, Memory, SafeFileHandle, string, ValueTask
 
 ### Community 64 - "ReceiverSession Message Handlers"
-Cohesion: 0.17
-Nodes (8): MerkleProof, Partial, byte, List, ChunkPacketizer, int, ChunkPacketMessage, IReadOnlyList
+Cohesion: 0.18
+Nodes (11): A defect the harness found that review had not, M12a — the real fan-out baseline, Rules earned, Test suite, The headline numbers, The receiver's sustained datagram ceiling, The wire does not change with receiver count — 5.08× is withdrawn, What this does to M12b's premise (+3 more)
 
 ### Community 65 - "FileTrustStore & PublicKeyId"
 Cohesion: 0.18
 Nodes (5): PrivateKey, PublicKeyId, string, TrustDecision, TrustOutcome
 
 ### Community 66 - "InMemoryTrustStore & Seed Merger Tests"
-Cohesion: 0.37
-Nodes (4): SessionRegistryTests, Fact, Key, Task
+Cohesion: 0.29
+Nodes (5): ISessionRegistry, SessionRegistryTests, Fact, Key, Task
 
 ### Community 67 - "FileSystemFileSink & IFileSink"
 Cohesion: 0.12
 Nodes (16): 2026-07-25 — M9 stage 1: proof-aware chunk slicing, and a 1472-byte datagram budget, A crash the new knob made reachable, found in review and fixed, "Degrades, never corrupts" was half right — QA measured a **stranded chunk**, now fixed, Loss behaviour — fewer, larger datagrams, re-validated unmodified, Measured wire composition (passive read-only sniffer, one lossless run per arm), One derived consequence, disclosed rather than hidden, Predictions, derived from the code and written down before the run, Read the win as datagram count, not bandwidth — and not as a syscall ceiling (+8 more)
 
 ### Community 68 - "Chunking Module Overview"
-Cohesion: 0.09
-Nodes (8): Castr.Core.Tests.Manifest, Castr.Core.Manifest, Castr.Core.Tests.Chunking, Castr.Core.Chunking, MerkleProofStep, MerkleSide, ManifestFileEntry, ManifestAdmissionOutcome
+Cohesion: 0.11
+Nodes (8): Castr.Core.Tests.Manifest, Castr.Core.Manifest, Castr.Core.Chunking, TransferPreparation, MerkleProofStep, MerkleSide, ManifestFileEntry, ManifestAdmissionOutcome
+
+### Community 69 - "DiscoveredPeer & ServiceType Tests"
+Cohesion: 0.32
+Nodes (3): IPEndPoint, DiscoveredPeerTests, Fact
 
 ### Community 70 - "ITrustStore & TrustSeedMerger"
 Cohesion: 0.15
@@ -515,20 +518,20 @@ Cohesion: 0.32
 Nodes (6): LargeChunkTransferTests, CancellationToken, Fact, IPAddress, Task, TimeSpan
 
 ### Community 72 - "Project csproj Files"
-Cohesion: 0.14
-Nodes (10): net10.0, Spectre.Console (0.49.1), Microsoft.NET.Sdk, net10.0, coverlet.collector (6.0.0), Microsoft.NET.Test.Sdk (17.8.0), Spectre.Console.Testing (0.49.1), xunit (2.5.3) (+2 more)
+Cohesion: 0.25
+Nodes (7): net10.0, coverlet.collector (6.0.0), Microsoft.NET.Test.Sdk (17.8.0), Spectre.Console.Testing (0.49.1), xunit (2.5.3), xunit.runner.visualstudio (2.5.3), Microsoft.NET.Sdk
 
 ### Community 73 - "TUI Chunk Heatmap"
 Cohesion: 0.21
 Nodes (8): char, IRenderable, Measurement, RenderOptions, Segment, ChunkHeatmap, IEnumerable, Style
 
 ### Community 74 - "UDP Transport & Integration Test Namespaces"
-Cohesion: 0.21
-Nodes (3): Castr.Core.IntegrationTests, Castr.Core.Transport.Udp, TestPorts
+Cohesion: 0.10
+Nodes (12): Castr.Core.IntegrationTests, Castr.Bench.DatagramCeiling, Castr.Core.Transport.Udp, Exception, InvalidInterfaceException, NetworkInterfaces, DatagramBudgetTooSmallException, PathTraversalException (+4 more)
 
 ### Community 75 - "Swarm Serve Listener"
-Cohesion: 0.21
-Nodes (10): ChunkPullRequestMessage, SwarmServeListener, CancellationToken, int, List, SemaphoreSlim, Task, IStreamConnection (+2 more)
+Cohesion: 0.18
+Nodes (13): LengthPrefixedFramer, int, ReadOnlyMemory, ChunkPullRequestMessage, SwarmServeListener, CancellationToken, int, List (+5 more)
 
 ### Community 76 - "E2E README & M3 Hardening Summary"
 Cohesion: 0.22
@@ -551,16 +554,16 @@ Cohesion: 0.25
 Nodes (4): PreparedTransfer, CancellationToken, Key, Task
 
 ### Community 81 - "RepairCoordinator Core"
-Cohesion: 0.15
-Nodes (9): RepairCoordinator, RepairOptions, DateTimeOffset, Dictionary, double, IEnumerable, int, Random (+1 more)
+Cohesion: 0.25
+Nodes (4): RepairCoordinator, DateTimeOffset, Dictionary, Random
 
 ### Community 82 - "PublicKeyId Ed25519 Tests"
-Cohesion: 0.23
-Nodes (6): ReadOnlySpan, PublicKeyIdTests, Fact, TransferFlowTests, AvaloniaFact, Task
+Cohesion: 0.18
+Nodes (7): ReadOnlySpan, PublicKeyIdTests, Fact, TransferFlowTests, AvaloniaFact, Task, Key
 
 ### Community 84 - "CLI Sender Identity"
-Cohesion: 0.17
-Nodes (10): SessionBindingDto, SessionBindingDto, SessionRegistryDocument, SessionRegistryJsonCodec, IReadOnlyList, JsonSerializerOptions, List, SessionBinding (+2 more)
+Cohesion: 0.11
+Nodes (18): SessionBindingDto, FileSessionRegistry, SessionBindingDto, SessionRegistryDocument, SessionRegistryJsonCodec, DateTimeOffset, IReadOnlyList, JsonSerializerOptions (+10 more)
 
 ### Community 85 - "Chunker Tests"
 Cohesion: 0.20
@@ -571,8 +574,8 @@ Cohesion: 0.25
 Nodes (7): Avalonia.Headless.XUnit (12.1.0), xunit.v3 (3.2.2), net10.0, coverlet.collector (6.0.0), Microsoft.NET.Test.Sdk (17.12.0), xunit.runner.visualstudio (3.1.4), Microsoft.NET.Sdk
 
 ### Community 87 - "MemoryFileSink"
-Cohesion: 0.06
-Nodes (54): ChunkCount, OutboundRecorder, Recorded, RecordedOutbound, IFileSink, IReadableFileSink, CancellationToken, Memory (+46 more)
+Cohesion: 0.19
+Nodes (13): ChunkCount, Recorded, RecordedOutbound, ReceiverSessionGossipAndRepairTests, Transfer, Fact, Factory, Func (+5 more)
 
 ### Community 88 - "IServiceDiscovery Interface"
 Cohesion: 0.20
@@ -583,8 +586,8 @@ Cohesion: 0.40
 Nodes (4): TransferBuilder, CancellationToken, Key, Task
 
 ### Community 90 - "CLI End-to-End Loopback Tests"
-Cohesion: 0.12
-Nodes (11): IDisposable, SenderIdentity, Key, FileSystemFileSource, SafeFileHandle, EndToEndLoopbackTests, Fact, string (+3 more)
+Cohesion: 0.16
+Nodes (9): IDisposable, SenderIdentity, Key, EndToEndLoopbackTests, Fact, string, Task, TimeSpan (+1 more)
 
 ### Community 91 - "TrustStoreJsonCodec Tests"
 Cohesion: 0.32
@@ -603,28 +606,28 @@ Cohesion: 0.29
 Nodes (6): Avalonia.Android (12.1.0), net10.0-android, Avalonia (12.1.0), Avalonia.Fonts.Inter (12.1.0), Avalonia.Themes.Fluent (12.1.0), Microsoft.NET.Sdk
 
 ### Community 95 - "GUI Project Config (csproj)"
-Cohesion: 0.29
-Nodes (6): CommunityToolkit.Mvvm (8.4.2), net10.0, Avalonia (12.1.0), Avalonia.Fonts.Inter (12.1.0), Avalonia.Themes.Fluent (12.1.0), Microsoft.NET.Sdk
+Cohesion: 0.15
+Nodes (11): Avalonia.iOS (12.1.0), CommunityToolkit.Mvvm (8.4.2), net10.0, Avalonia (12.1.0), Avalonia.Fonts.Inter (12.1.0), Avalonia.Themes.Fluent (12.1.0), Microsoft.NET.Sdk, net10.0 (+3 more)
 
 ### Community 96 - "Discovery Test Project Config"
-Cohesion: 0.29
-Nodes (6): net10.0, coverlet.collector (6.0.0), Microsoft.NET.Test.Sdk (17.8.0), xunit (2.5.3), xunit.runner.visualstudio (2.5.3), Microsoft.NET.Sdk
+Cohesion: 0.17
+Nodes (10): net10.0, net10.0-android, net10.0-ios, Microsoft.NET.Sdk, net10.0, coverlet.collector (6.0.0), Microsoft.NET.Test.Sdk (17.8.0), xunit (2.5.3) (+2 more)
 
 ### Community 97 - "In-App Trust Prompt"
-Cohesion: 0.29
-Nodes (5): ObservableObject, InAppTrustPrompt, CancellationToken, Task, ViewModelBase
+Cohesion: 0.22
+Nodes (9): 2026-07-27 — M12a: the real multi-receiver fan-out baseline, and the receiver's datagram ceiling, A defect the harness found that review had not, Goodput against receiver count — the number that replaces 8.01/13.65, Methodology notes, The limit this measurement does not reach, The receiver's sustained datagram ceiling — a number that did not exist, The wire is flat. Amplification does not grow with receiver count at all, What this does to M12b's premise (+1 more)
 
 ### Community 98 - "RepairCoordinator Ranking & Endpoint Helpers"
-Cohesion: 0.18
+Cohesion: 0.19
 Nodes (9): ReceivedPacket, IAsyncEnumerable, IAsyncEnumerable, PacedRecordingTransport, RecordingMulticastTransport, CancellationToken, IAsyncEnumerable, ReadOnlyMemory (+1 more)
 
 ### Community 99 - "GUI UdpTransportFactory"
-Cohesion: 0.13
-Nodes (10): IAsyncDisposable, IMulticastTransport, IStreamListener, InMemoryTransportFactory, int, ITransportFactory, PreparedTransfer, UdpTransportFactory (+2 more)
+Cohesion: 0.18
+Nodes (8): IAsyncDisposable, IMulticastTransport, InMemoryTransportFactory, int, ITransportFactory, UdpTransportFactory, int, IPAddress
 
 ### Community 100 - "UDP Unicast Transport Tests"
-Cohesion: 0.30
-Nodes (5): IAsyncEnumerable, ReadOnlyMemory, UdpUnicastTransportTests, Fact, Task
+Cohesion: 0.36
+Nodes (4): IAsyncEnumerable, UdpUnicastTransportTests, Fact, Task
 
 ### Community 101 - "Core Project Config (csproj)"
 Cohesion: 0.21
@@ -635,28 +638,24 @@ Cohesion: 0.40
 Nodes (6): LLM Wiki maintenance convention, Wiki page template, Wiki Graph Ontology, Wiki Graph Layer docs, Wiki optional graph metadata (graph: key), Wiki Schema (conventions)
 
 ### Community 103 - "iOS Project Config (csproj)"
-Cohesion: 0.18
-Nodes (9): Avalonia.iOS (12.1.0), net10.0, net10.0-android, net10.0-ios, Microsoft.NET.Sdk, net10.0, net10.0-ios, Avalonia.Fonts.Inter (12.1.0) (+1 more)
+Cohesion: 0.22
+Nodes (7): System.CommandLine (2.0.0), net10.0, Spectre.Console (0.49.1), Microsoft.NET.Sdk, net10.0, Spectre.Console (0.49.1), Microsoft.NET.Sdk
 
 ### Community 104 - "MemoryFileSource"
-Cohesion: 0.18
-Nodes (10): CancellationToken, ReadOnlyMemory, ValueTask, RealMulticastFanOutTests, CancellationToken, Fact, Task, SmokeTest (+2 more)
+Cohesion: 0.48
+Nodes (4): RealMulticastFanOutTests, CancellationToken, Fact, Task
 
 ### Community 105 - "IStreamClient Interface"
-Cohesion: 0.15
-Nodes (10): SpanReader, AnnounceMessage, ChunkDataMessage, ChunkPullResponseMessage, KeyUnavailableMessage, ManifestMessage, ManifestRequestMessage, PacketFragmentMessage (+2 more)
+Cohesion: 0.58
+Nodes (3): ChunkerTests, Fact, Task
 
 ### Community 106 - "IStreamListener Interface"
 Cohesion: 0.27
 Nodes (5): ContentKeyDeterminismTests, byte, Fact, InlineData, Theory
 
 ### Community 107 - "MainViewModel & ViewModelBase"
-Cohesion: 0.18
+Cohesion: 0.20
 Nodes (10): ChunkIndices, FileIndex, PeerHaveMessage, FileTrafficObserver, RecordedOutbound, Dictionary, IReadOnlyList, List (+2 more)
-
-### Community 109 - "GUI ITransportFactory Interface"
-Cohesion: 0.21
-Nodes (9): DiscoveryListener, NsdManager, RegistrationListener, NsdServiceDiscovery, bool, CancellationToken, IAsyncEnumerable, Task (+1 more)
 
 ### Community 110 - "Trusted Senders Seed File"
 Cohesion: 0.40
@@ -675,8 +674,8 @@ Cohesion: 0.22
 Nodes (10): KeyAgreementAlgorithm, KeyDerivationAlgorithm, SharedSecret, ContentKeyWrap, AeadAlgorithm, byte, int, Key (+2 more)
 
 ### Community 114 - "ReceiveViewModel Trust Denial"
-Cohesion: 0.15
-Nodes (11): System.CommandLine (2.0.0), net10.0, Spectre.Console (0.49.1), Microsoft.NET.Sdk, net10.0, coverlet.collector (6.0.0), Microsoft.NET.Test.Sdk (17.8.0), Spectre.Console.Testing (0.49.1) (+3 more)
+Cohesion: 0.25
+Nodes (7): net10.0, coverlet.collector (6.0.0), Microsoft.NET.Test.Sdk (17.8.0), Spectre.Console.Testing (0.49.1), xunit (2.5.3), xunit.runner.visualstudio (2.5.3), Microsoft.NET.Sdk
 
 ### Community 115 - "SwarmReceiveViewModel Trust Denial"
 Cohesion: 0.35
@@ -694,21 +693,25 @@ Nodes (12): 2026-07-25 — M10: bounding `ReceiverSession._chunkCache` (memory, 
 Cohesion: 0.21
 Nodes (8): IStreamConnection, TcpStreamConnection, CancellationToken, Endpoint, Memory, ReadOnlyMemory, Socket, ValueTask
 
+### Community 121 - "Factory Type Node"
+Cohesion: 0.29
+Nodes (4): RepairOptions, double, int, TimeSpan
+
 ### Community 122 - "GetSink Helper Node"
-Cohesion: 0.45
-Nodes (3): InMemoryStreamNetworkTests, Fact, Task
+Cohesion: 0.24
+Nodes (8): SwarmServeListenerTests, Fact, Func, Task, TimeSpan, InMemoryStreamNetworkTests, Fact, Task
 
 ### Community 123 - "HashSet Type Node"
 Cohesion: 0.18
 Nodes (11): 2026-07-25 — Instrumented measurement campaign (91 real transfers), A/B matrix, Both sides are bound by per-datagram cost, not bytes and not crypto, ⚠️ But the waste is accidentally load-bearing, Corrections to earlier records in this file, Known test issue, pre-existing, Ranked by measured payoff, ⚠️ Read this first: the OS page cache is a ~2× confounder (+3 more)
 
 ### Community 124 - "IAsyncEnumerable Type Node"
-Cohesion: 0.18
-Nodes (10): Castr — milestone plan, Definition of done, every milestone, M11 — Clear the small backlog, M12 — Fan-out scaling, M13 — Release automation, M14 — Documentation reconciliation, Part 1 — Completed, Part 2 — Remaining (+2 more)
+Cohesion: 0.15
+Nodes (12): Castr — milestone plan, Definition of done, every milestone, M11 — Clear the small backlog — ✅ **COMPLETE (2026-07-27)**, M12 — Fan-out scaling, M12a — measurement only — ✅ **COMPLETE (2026-07-27)**, M12b — protocol, M13 — Release automation, M14 — Documentation reconciliation (+4 more)
 
 ### Community 126 - "IPeerTable Type Node"
-Cohesion: 0.49
-Nodes (3): UdpMulticastTransportTests, Fact, Task
+Cohesion: 0.24
+Nodes (9): CancellationToken, ReadOnlyMemory, ValueTask, SmokeTest, Fact, Task, UdpMulticastTransportTests, Fact (+1 more)
 
 ### Community 127 - "ISystemClock Type Node"
 Cohesion: 0.29
@@ -719,8 +722,8 @@ Cohesion: 0.24
 Nodes (7): ConcurrencyProbeTransport, CancellationToken, IAsyncEnumerable, int, Lock, ReadOnlyMemory, ValueTask
 
 ### Community 129 - "KeyGrantMessage Type Node"
-Cohesion: 0.44
-Nodes (5): SwarmServeListenerTests, Fact, Func, Task, TimeSpan
+Cohesion: 0.33
+Nodes (4): MemoryFileSource, CancellationToken, Memory, ValueTask
 
 ### Community 130 - "ManifestMessage Type Node"
 Cohesion: 0.40
@@ -731,7 +734,7 @@ Cohesion: 0.20
 Nodes (10): Design sketch, Open questions, Prerequisites, Prior art: this is UFTP's design, Proposal: section-based repair gating, The actual motivation: deleting a bug class, The idea, What this is *not*: a throughput change (+2 more)
 
 ### Community 132 - "MerkleProof Type Node"
-Cohesion: 0.36
+Cohesion: 0.43
 Nodes (4): Color, TransferDashboardRenderer, IRenderable, Text
 
 ### Community 133 - "MerkleTree Type Node"
@@ -750,10 +753,6 @@ Nodes (5): EventArgs, MainWindow, TrustPromptDialog, Window, WindowClosingEventA
 Cohesion: 0.22
 Nodes (8): Testcontainers (4.13.0), net10.0, coverlet.collector (6.0.0), Microsoft.NET.Test.Sdk (17.8.0), NSec.Cryptography (26.4.0), xunit (2.5.3), xunit.runner.visualstudio (2.5.3), Microsoft.NET.Sdk
 
-### Community 138 - "Signed Type Node"
-Cohesion: 0.22
-Nodes (4): ChunkPacketAssembler, Dictionary, int, long
-
 ### Community 139 - "SignedManifest Type Node"
 Cohesion: 0.28
 Nodes (6): ChaosTransport, CancellationToken, IAsyncEnumerable, Random, ReadOnlyMemory, ValueTask
@@ -767,8 +766,8 @@ Cohesion: 0.22
 Nodes (8): Correctness of what things are called, M11 — clearing the small backlog, Memory and lifetime bounds, Not done, Rules earned, Security and robustness, The E2E loss filter was measuring something other than what it claimed, The one that changed the wire
 
 ### Community 142 - "MessageCodec Stream Param"
-Cohesion: 0.32
-Nodes (4): MessageCodec, byte, int, Stream
+Cohesion: 0.40
+Nodes (3): IStreamClient, CancellationToken, ValueTask
 
 ### Community 143 - "ReceiverSession ChunkRequestMessage Param"
 Cohesion: 0.32
@@ -782,17 +781,21 @@ Nodes (5): ScriptedTransport, CancellationToken, IAsyncEnumerable, ReadOnlyMemor
 Cohesion: 0.32
 Nodes (5): FilteringMulticastTransport, CancellationToken, IAsyncEnumerable, ReadOnlyMemory, ValueTask
 
+### Community 146 - "ReceiverSession ReceivedPacket Param"
+Cohesion: 0.50
+Nodes (3): Ciphertext, Proof, Transfer
+
 ### Community 148 - "SenderSession ChunkRequestMessage Param"
 Cohesion: 0.29
 Nodes (7): 2026-07-25 — M7 implementation A/B (P2 filters, P1 PEER_HAVE coalescing, P0 repair bounding), ⚠️ Host state was degraded — goodput figures here are NOT comparable to the campaign above, P2 is a correctness fix, and must not borrow credit from P1, Test-suite note, Watermark isolated (stage4 vs stage3), What this run set does and does not support, What to measure next
 
 ### Community 149 - "SenderSession IFileSource Param"
-Cohesion: 0.29
-Nodes (7): 2026-07-25 — Showcase demo re-capture (post-M8), Capture-tooling notes worth not rediscovering, Conventions, Derived overhead (computed from code, not measured), Independent corroboration from data already in this file, The gossip term is quadratic in file size, Throughput run log
+Cohesion: 0.17
+Nodes (12): 2026-07-25 — Showcase demo re-capture (post-M8), 2026-07-26 — First post-reboot wire measurement: the router cap confirmed, and Castr is near it, Capture-tooling notes worth not rediscovering, Conventions, Correction, same day: the leaked memberships came back within hours, and force-killing processes is why, Derived overhead (computed from code, not measured), Independent corroboration from data already in this file, Methodology note — a harness bug that produced a plausible wrong answer (+4 more)
 
 ### Community 150 - "UdpMulticastTransport Endpoint Param"
 Cohesion: 0.10
-Nodes (19): From, ReceivedBytes, SocketOptionName, Endpoint, UdpMulticastTransport, bool, CancellationToken, CancellationTokenSource (+11 more)
+Nodes (18): From, ReceivedBytes, SocketOptionName, UdpMulticastTransport, bool, CancellationToken, CancellationTokenSource, Channel (+10 more)
 
 ### Community 151 - "UdpMulticastTransport IPEndPoint Param"
 Cohesion: 0.29
@@ -862,33 +865,29 @@ Nodes (5): Demo capture scripts, Files, Known gotchas (found the hard way — do
 Cohesion: 0.40
 Nodes (3): AvaloniaMainActivity, Castr.Gui.Android, MainActivity
 
-### Community 171 - "2026-07-26 — First post-reboot wire measurement: the router cap confirmed, and Castr is near it"
-Cohesion: 0.40
-Nodes (5): 2026-07-26 — First post-reboot wire measurement: the router cap confirmed, and Castr is near it, Correction, same day: the leaked memberships came back within hours, and force-killing processes is why, Methodology note — a harness bug that produced a plausible wrong answer, The consequence, stated plainly, This confirms the prediction, and the tightness is the tell
-
 ### Community 172 - "Castr.Core.csproj"
-Cohesion: 0.40
-Nodes (4): Blake3 (3.0.2), net10.0, NSec.Cryptography (26.4.0), Microsoft.NET.Sdk
+Cohesion: 0.25
+Nodes (6): Blake3 (3.0.2), net10.0, NSec.Cryptography (26.4.0), Microsoft.NET.Sdk, net10.0, Microsoft.NET.Sdk
 
 ## Knowledge Gaps
-- **288 isolated node(s):** `net10.0`, `System.CommandLine (2.0.0)`, `Spectre.Console (0.49.1)`, `Microsoft.NET.Sdk`, `net10.0` (+283 more)
+- **317 isolated node(s):** `net10.0`, `System.CommandLine (2.0.0)`, `Spectre.Console (0.49.1)`, `Microsoft.NET.Sdk`, `net10.0` (+312 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **15 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **14 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `ReceiverSession` connect `Receiver Session Core` to `Swarm Pull Session & Protocol Messages`, `Sender Session Protocol`, `Signed Type Node`, `End-to-End Transfer Tests`, `Sources Node`, `Packet Reassembler & Wire Packetizer`, `Real TCP Swarm Pull Tests`, `TUI Dashboard End-to-End Tests`, `Receive ViewModel (Desktop)`, `Manifest Admission`, `Manifest Signing Tests`, `IPeerTable Interface`, `ITrustStore & TrustSeedMerger`, `Large Chunk Transfer Tests`, `CLI Receive Runner`, `RepairCoordinator Core`, `MemoryFileSink`, `GUI UdpTransportFactory`, `Core Project Config (csproj)`, `ReceiverSession Progress Tracking`, `ISystemClock Type Node`?**
-  _High betweenness centrality (0.067) - this node is a cross-community bridge._
-- **Why does `Castr.Core.Transport` connect `Protocol & Swarm Module Overview` to `RepairCoordinator Ranking & Endpoint Helpers`, `GUI UdpTransportFactory`, `Chunking Module Overview`, `Transport Interfaces & In-Memory Network`, `UDP Transport & Integration Test Namespaces`, `Swarm Serve Listener`, `ReceiverSession ReceivedPacket Param`, `Real TCP Swarm Pull Tests`, `GUI App Shell & ViewModels`, `CLI Program Bootstrap & Paths`, `SwarmPullSession Core Logic`?**
-  _High betweenness centrality (0.058) - this node is a cross-community bridge._
-- **Why does `Castr.Core.Protocol` connect `Protocol & Swarm Module Overview` to `Chunking Module Overview`, `MerkleProof Type Node`, `IStreamClient Interface`, `UDP Transport & Integration Test Namespaces`, `ReceiverSession Progress Tracking`, `Packet Reassembler & Wire Packetizer`, `Real TCP Swarm Pull Tests`, `GUI App Shell & ViewModels`, `ReceiverSession ReceivedPacket Param`, `CLI Program Bootstrap & Paths`, `CLI UnitTest1 Stub`, `Network Interfaces & Path Safety`, `Chunk Bitmap`?**
-  _High betweenness centrality (0.057) - this node is a cross-community bridge._
+- **Why does `Castr.Core.Transport` connect `Real TCP Swarm Pull Tests` to `GUI UdpTransportFactory`, `Transport Interfaces & In-Memory Network`, `Chunking Module Overview`, `UDP Transport & Integration Test Namespaces`, `Protocol & Swarm Module Overview`, `Swarm Serve Listener`, `MessageCodec Stream Param`, `PeerTable Discovery Integration`, `GUI App Shell & ViewModels`, `CLI Program Bootstrap & Paths`?**
+  _High betweenness centrality (0.070) - this node is a cross-community bridge._
+- **Why does `ReceiverSession` connect `Receiver Session Core` to `Swarm Pull Session & Protocol Messages`, `Sender Session Protocol`, `End-to-End Transfer Tests`, `Sources Node`, `Chunk Packetizer & Assembler`, `Packet Reassembler & Wire Packetizer`, `Real TCP Swarm Pull Tests`, `TUI Dashboard End-to-End Tests`, `Receive ViewModel (Desktop)`, `Manifest Admission`, `Manifest Signing Tests`, `IPeerTable Interface`, `ITrustStore & TrustSeedMerger`, `Large Chunk Transfer Tests`, `CLI Receive Runner`, `RepairCoordinator Core`, `MemoryFileSink`, `GUI UdpTransportFactory`, `Core Project Config (csproj)`, `ReceiverSession Progress Tracking`, `Factory Type Node`, `ISystemClock Type Node`?**
+  _High betweenness centrality (0.068) - this node is a cross-community bridge._
+- **Why does `Castr.Core.Protocol` connect `Protocol & Swarm Module Overview` to `Merkle Verification & Message Codec`, `Chunking Module Overview`, `UDP Transport & Integration Test Namespaces`, `ReceiverSession Progress Tracking`, `Packet Reassembler & Wire Packetizer`, `Real TCP Swarm Pull Tests`, `GUI App Shell & ViewModels`, `CLI Program Bootstrap & Paths`, `CLI UnitTest1 Stub`, `Chunk Bitmap`?**
+  _High betweenness centrality (0.054) - this node is a cross-community bridge._
 - **What connects `net10.0`, `System.CommandLine (2.0.0)`, `Spectre.Console (0.49.1)` to the rest of the system?**
-  _288 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _317 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Swarm Pull Session & Protocol Messages` be split into smaller, more focused modules?**
-  _Cohesion score 0.06486486486486487 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.061938061938061936 - nodes in this community are weakly interconnected._
+- **Should `Merkle Verification & Message Codec` be split into smaller, more focused modules?**
+  _Cohesion score 0.058363858363858365 - nodes in this community are weakly interconnected._
 - **Should `In-Memory Service Discovery` be split into smaller, more focused modules?**
   _Cohesion score 0.07680491551459294 - nodes in this community are weakly interconnected._
-- **Should `Sender Session Protocol` be split into smaller, more focused modules?**
-  _Cohesion score 0.12141779788838612 - nodes in this community are weakly interconnected._

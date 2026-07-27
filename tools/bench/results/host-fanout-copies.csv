@@ -1,0 +1,6 @@
+﻿"Interface","Group","DatagramBytes","Receivers","Threads","TargetRate","OfferedPerSecond","OfferedMBps","WorstDrainedPerSec","WorstDrainedMBps","WorstLossPercent","MeanLossPercent","TotalLostDatagrams","SpanSeconds","AggregateCopiesPerSecond"
+"Loopback Pseudo-Interface 1","239.192.58.10","1472","1","4","0","137278.4","192.713","137294.2","192.735","0.002","0.002","45","14.998","137278"
+"Loopback Pseudo-Interface 1","239.192.58.10","1472","2","4","0","76687.4","107.654","76693.2","107.663","0","0","0","14.999","153375"
+"Loopback Pseudo-Interface 1","239.192.58.10","1472","3","4","0","53054.5","74.478","53058.6","74.484","0","0","0","14.999","159164"
+"Loopback Pseudo-Interface 1","239.192.58.10","1472","5","4","0","33593.8","47.159","33603.3","47.173","0","0","0","14.996","167969"
+"Loopback Pseudo-Interface 1","239.192.58.10","1472","8","4","0","21827","30.641","21836.3","30.654","0","0","0","14.994","174616"

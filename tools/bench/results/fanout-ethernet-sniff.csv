@@ -1,0 +1,3 @@
+﻿"Repeat","ReceiverCount","WallSeconds","GoodputMBps","AggregateMBps","Complete","ExitCodes","HashesMatched","Interface","Group","ChunkSize","SizeBytes","SniffDatagrams","SniffPayloadB","SniffEthernetB","WireAmplification","SniffChunkPacket","SniffPeerHave","SniffChunkReq","SniffChunkResp","SniffFragment"
+"1","1","9.93","10.07","10.07","True","","1","Ethernet","239.192.58.11","262144","104857600","73637","107860954","112720996","1.0286","73600","33",,,
+"1","5","11.951","8.368","41.838","True","||||","5","Ethernet","239.192.58.11","262144","104857600","73827","107879398","112751980","1.0288","73600","215",,,
