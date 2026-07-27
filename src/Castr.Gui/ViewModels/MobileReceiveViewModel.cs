@@ -39,6 +39,7 @@ public sealed partial class MobileReceiveViewModel : ObservableObject, ITrustPro
 
     private SwarmPullSession? _session;
     private CancellationTokenSource? _browseCts;
+    private CancellationTokenSource? _pullCts;
     private Task? _browseTask;
 
     /// <param name="discovery">Local-network peer discovery (native mDNS on device; in-memory in tests).</param>
@@ -144,13 +145,17 @@ public sealed partial class MobileReceiveViewModel : ObservableObject, ITrustPro
             return;
 
         IsPulling = true;
+        // Held in a field rather than a method-local `using var`, so CancelPull and Dispose can reach it. A
+        // method-local one is visible only to the method that awaits it, which meant nothing outside PullAsync
+        // could stop a pull: a user who picked the wrong peer, or backgrounded the app mid-transfer, had no way
+        // out. Android's SwarmReceiveViewModel has had this shape all along.
+        _pullCts = new CancellationTokenSource();
         try
         {
             _session ??= CreateSession();
 
             Status = $"Pulling from {target.DisplayName}…";
-            using var cts = new CancellationTokenSource();
-            bool accepted = await _session.PullFromAsync(target.Endpoint, cts.Token).ConfigureAwait(true);
+            bool accepted = await _session.PullFromAsync(target.Endpoint, _pullCts.Token).ConfigureAwait(true);
 
             if (!accepted)
                 Status = "Peer rejected: untrusted sender or no transfer on offer.";
@@ -169,9 +174,15 @@ public sealed partial class MobileReceiveViewModel : ObservableObject, ITrustPro
         }
         finally
         {
+            _pullCts?.Dispose();
+            _pullCts = null;
             IsPulling = false;
         }
     }
+
+    /// <summary>Cancels an in-flight pull. The session is resumable, so what has been verified so far is kept.</summary>
+    [RelayCommand]
+    private void CancelPull() => _pullCts?.Cancel();
 
     private SwarmPullSession CreateSession()
     {
@@ -219,6 +230,8 @@ public sealed partial class MobileReceiveViewModel : ObservableObject, ITrustPro
     {
         _browseCts?.Cancel();
         _browseCts?.Dispose();
+        _pullCts?.Cancel();
+        _pullCts?.Dispose();
         _session?.Dispose();
     }
 }

@@ -40,6 +40,12 @@
               Command="{Binding PullCommand}"
               IsEnabled="{Binding PullCommand.CanExecute}" />
 
+      <!-- Shown only during a pull: the session is resumable, so cancelling keeps whatever is already verified. -->
+      <Button Content="Cancel pull"
+              HorizontalAlignment="Stretch"
+              Command="{Binding CancelPullCommand}"
+              IsVisible="{Binding IsPulling}" />
+
       <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Margin="0,4,0,0" />
 
       <!-- Inline Trust-On-First-Use prompt, shown only while an unknown sender awaits a decision. -->

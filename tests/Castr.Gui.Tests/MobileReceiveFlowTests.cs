@@ -70,6 +70,48 @@ public class MobileReceiveFlowTests
     }
 
     [AvaloniaFact]
+    public async Task PullAgainstAStalledPeer_CanBeCancelled()
+    {
+        // The gap: PullAsync held its CancellationTokenSource in a method-local `using var`, so the token was
+        // visible only to the method awaiting it and there was no CancelPull command at all. A user who picked
+        // the wrong peer, or whose peer went quiet mid-transfer, had no way out — the pull simply hung, with
+        // IsPulling stuck true and the Pull button disabled by CanExecute. Android's SwarmReceiveViewModel has
+        // had the field-plus-command shape all along.
+        var payload = RandomBytes(31, 30_000);
+        using var key = ManifestSigner.CreateSigningKey();
+        var transfer = BuildTransfer(key, "stalled.bin", payload, chunkSize: 2048);
+
+        var streamNetwork = new InMemoryStreamNetwork();
+        var stalling = new StallingChunkSource(transfer.Sender.CreateSwarmContentSource());
+        await using var serve = StartServe(streamNetwork, SenderEndpoint, stalling);
+
+        var discoveryNetwork = new InMemoryDiscoveryNetwork();
+        await using var advertiser = new InMemoryServiceDiscovery(discoveryNetwork, host: SenderHost);
+        await advertiser.AdvertiseAsync("Stalled Sender", SenderPort);
+
+        var browser = new InMemoryServiceDiscovery(discoveryNetwork, host: "receiver-device");
+        using var vm = new MobileReceiveViewModel(
+            browser,
+            prompt => NewSession(streamNetwork, TrustedStoreFor(key), new SinkHolder(), prompt));
+
+        vm.StartBrowsingCommand.Execute(null);
+        await PumpUntil(() => vm.Peers.Count > 0);
+
+        var pull = vm.PullCommand.ExecuteAsync(null);
+        await PumpUntil(() => vm.IsPulling && stalling.Stalled.Task.IsCompleted);
+
+        vm.CancelPullCommand.Execute(null);
+        await PumpUntil(() => !vm.IsPulling);
+        await pull;
+
+        Assert.Equal("Pull cancelled.", vm.Status);
+        Assert.False(vm.IsPulling);
+        Assert.True(vm.PullCommand.CanExecute(null)); // and the user can pick another peer and try again
+
+        stalling.Release(); // let the serve loop unwind so the fixture can dispose
+    }
+
+    [AvaloniaFact]
     public async Task PullFromUntrustedSender_IsRejected_NoData()
     {
         var payload = RandomBytes(8, 8000);
@@ -215,6 +257,27 @@ public class MobileReceiveFlowTests
     }
 
     private sealed record Transfer(SignedManifest Signed, SenderSession Sender);
+
+    /// <summary>Serves normally until the first chunk is asked for, then blocks there until released — a peer that has stopped responding mid-pull.</summary>
+    private sealed class StallingChunkSource(ISwarmContentSource inner) : ISwarmContentSource
+    {
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Stalled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Release() => _release.TrySetResult();
+
+        public SignedManifest? Manifest => inner.Manifest;
+
+        public async ValueTask<SwarmChunk?> TryGetChunkAsync(int fileIndex, int chunkIndex, CancellationToken cancellationToken = default)
+        {
+            Stalled.TrySetResult();
+            await _release.Task.WaitAsync(TimeSpan.FromSeconds(30), CancellationToken.None).ConfigureAwait(false);
+            return await inner.TryGetChunkAsync(fileIndex, chunkIndex, cancellationToken).ConfigureAwait(false);
+        }
+
+        public KeyGrantMessage? TryGrantContentKey(JoinRequestMessage request) => inner.TryGrantContentKey(request);
+    }
 
     private static Transfer BuildTransfer(Key key, string relativePath, byte[] bytes, int chunkSize)
     {
