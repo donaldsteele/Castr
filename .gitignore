@@ -56,6 +56,11 @@ docker-compose.override.yml
 ## New-DemoFiles.ps1 + the capture-*.ps1 scripts; only the scripts themselves are tracked.
 tools/demo-capture/workspace/
 
+## Benchmark scratch workspace (tools/bench) — payload files, per-process logs, sender keys,
+## per-arm JSON. The CSVs under tools/bench/results/ ARE tracked: they are the raw data behind
+## the rows in docs/benchmarks/throughput-runs.md and are small.
+tools/bench/workspace/
+
 ## graphify generated output — regenerate anytime via `/graphify --update`.
 ## GRAPH_REPORT.md is kept tracked (small, human-readable, diffable); everything
 ## else here is large and/or a pure cache, not worth versioning on every change.

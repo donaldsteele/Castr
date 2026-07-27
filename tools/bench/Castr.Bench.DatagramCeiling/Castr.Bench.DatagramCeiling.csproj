@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>castr-dgram</AssemblyName>
+    <RootNamespace>Castr.Bench.DatagramCeiling</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The drain side deliberately measures the SHIPPED transport (socket options, reader task, bounded
+      inbox, per-datagram ReceivedPacket copy) rather than a lookalike. A hand-rolled drain loop would
+      report a ceiling no Castr receiver can actually reach.
+    -->
+    <ProjectReference Include="..\..\..\src\Castr.Core\Castr.Core.csproj" />
+  </ItemGroup>
+
+</Project>

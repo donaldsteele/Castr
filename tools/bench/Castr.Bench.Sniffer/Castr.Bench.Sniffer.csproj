@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>castr-sniff</AssemblyName>
+    <RootNamespace>Castr.Bench.Sniffer</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <!--
+    Deliberately references NOTHING from src/. The sniffer's whole value as an independent check is that it
+    knows only the two-byte [FormatVersion][MessageType] datagram prefix, so it cannot agree with the product
+    code by construction. Adding a ProjectReference here would destroy that property.
+  -->
+
+</Project>
