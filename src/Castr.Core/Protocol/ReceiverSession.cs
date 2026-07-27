@@ -32,7 +32,8 @@ public sealed record ReceiverSessionOptions(
     bool IsInteractive = false,
     TimeSpan? PeerHaveInterval = null,
     TimeSpan? CarouselIdleThreshold = null,
-    long? ChunkCacheBytes = null);
+    long? ChunkCacheBytes = null,
+    ISessionRegistry? SessionRegistry = null);
 
 /// <summary>
 /// Why a receiver did or did not relay a chunk to a peer that asked for it — see
@@ -682,11 +683,15 @@ public sealed class ReceiverSession
         // Signature verification + TOFU trust flow — the exact same admission gate the unicast-swarm
         // SwarmPullSession runs (see Castr.Core.Trust.ManifestAdmission), extracted so there is one copy.
         var admission = await ManifestAdmission.EvaluateAsync(
-            message.SignedManifest, _trustStore, _clock, _options.UnknownSenderPolicy, _options.IsInteractive, _trustPrompt, ct)
+            message.SignedManifest, _trustStore, _clock, _options.UnknownSenderPolicy, _options.IsInteractive, _trustPrompt, ct,
+            _options.SessionRegistry)
             .ConfigureAwait(false);
 
         if (admission.Outcome == ManifestAdmissionOutcome.SignatureInvalid)
             return; // invalid signature — forged or corrupt, reject outright (no trust event, unchanged behavior)
+
+        if (admission.Outcome == ManifestAdmissionOutcome.SessionIdConflict)
+            return; // this session id already means a different transfer — drop, exactly like a bad signature
 
         if (admission.Outcome == ManifestAdmissionOutcome.Denied)
         {

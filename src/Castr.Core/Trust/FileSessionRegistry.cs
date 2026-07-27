@@ -1,0 +1,118 @@
+using System.Text.Json;
+using Castr.Core.Chunking;
+using Castr.Core.Security;
+
+namespace Castr.Core.Trust;
+
+/// <summary>
+/// A JSON-file-backed <see cref="ISessionRegistry"/>, on the same shape as <see cref="FileTrustStore"/>: load
+/// eagerly at construction, persist synchronously after every mutation, write via a temp file and move into
+/// place so a crash mid-write cannot corrupt it.
+///
+/// <para>Persistence is the point rather than a convenience. The CLI runs one transfer per invocation, so a
+/// registry that lived only as long as the process would classify every session id as fresh and enforce
+/// nothing — a check that is not a check. What makes the binding meaningful is that it outlives the transfer
+/// that created it.</para>
+///
+/// <para>A corrupt or unreadable file is treated as an empty registry rather than a fatal error: the failure
+/// this guards against is a sender reusing a session id, and refusing to receive anything at all because a
+/// cache file got truncated would be a worse outcome than losing the history it held.</para>
+/// </summary>
+public sealed class FileSessionRegistry : ISessionRegistry
+{
+    private readonly string _path;
+    private readonly InMemorySessionRegistry _inner;
+
+    public FileSessionRegistry(string path, int capacity = InMemorySessionRegistry.DefaultCapacity)
+    {
+        _path = path;
+        _inner = new InMemorySessionRegistry(capacity);
+
+        if (!File.Exists(path))
+            return;
+
+        try
+        {
+            _inner.Seed(SessionRegistryJsonCodec.Decode(File.ReadAllText(path)));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+        {
+            // Start empty. See the note on this class about why this is not fatal.
+        }
+    }
+
+    public SessionAdmission Classify(byte[] sessionId, PublicKeyId senderId, ChunkHash manifestDigest) =>
+        _inner.Classify(sessionId, senderId, manifestDigest);
+
+    public void Record(byte[] sessionId, PublicKeyId senderId, ChunkHash manifestDigest, DateTimeOffset now)
+    {
+        _inner.Record(sessionId, senderId, manifestDigest, now);
+        Save();
+    }
+
+    public IReadOnlyList<SessionBinding> All() => _inner.All();
+
+    private void Save()
+    {
+        var directory = Path.GetDirectoryName(Path.GetFullPath(_path));
+        if (!string.IsNullOrEmpty(directory))
+            Directory.CreateDirectory(directory);
+
+        var tempPath = _path + ".tmp";
+        File.WriteAllText(tempPath, SessionRegistryJsonCodec.Encode(_inner.All()));
+        File.Move(tempPath, _path, overwrite: true);
+    }
+}
+
+/// <summary>Reads/writes the session-registry file format.</summary>
+public static class SessionRegistryJsonCodec
+{
+    private static readonly JsonSerializerOptions Options = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+    };
+
+    public static IReadOnlyList<SessionBinding> Decode(string json)
+    {
+        var document = JsonSerializer.Deserialize<SessionRegistryDocument>(json, Options)
+            ?? throw new InvalidDataException("Session registry JSON deserialized to null.");
+
+        return [.. document.Sessions.Select(dto => new SessionBinding(
+            SessionId: dto.SessionId ?? throw new InvalidDataException("Entry missing sessionId."),
+            SenderId: new PublicKeyId(dto.SenderId ?? throw new InvalidDataException("Entry missing senderId.")),
+            ManifestDigest: dto.ManifestDigest ?? throw new InvalidDataException("Entry missing manifestDigest."),
+            FirstSeen: dto.FirstSeen ?? DateTimeOffset.UnixEpoch))];
+    }
+
+    public static string Encode(IReadOnlyList<SessionBinding> bindings)
+    {
+        var document = new SessionRegistryDocument
+        {
+            Version = 1,
+            Sessions = [.. bindings.Select(b => new SessionBindingDto
+            {
+                SessionId = b.SessionId,
+                SenderId = b.SenderId.Value,
+                ManifestDigest = b.ManifestDigest,
+                FirstSeen = b.FirstSeen,
+            })],
+        };
+        return JsonSerializer.Serialize(document, Options);
+    }
+
+    private sealed class SessionRegistryDocument
+    {
+        public int Version { get; set; } = 1;
+        public List<SessionBindingDto> Sessions { get; set; } = [];
+    }
+
+    private sealed class SessionBindingDto
+    {
+        public string? SessionId { get; set; }
+        public string? SenderId { get; set; }
+        public string? ManifestDigest { get; set; }
+        public DateTimeOffset? FirstSeen { get; set; }
+    }
+}

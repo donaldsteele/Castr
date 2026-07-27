@@ -41,7 +41,8 @@ public partial class App : Application
         var trustPrompt = new DialogTrustPrompt(() => desktop.MainWindow);
 
         var send = new SendViewModel(transports, signingKey);
-        var receive = new ReceiveViewModel(transports, trustStore, trustPrompt);
+        ISessionRegistry sessionRegistry = new FileSessionRegistry(Path.Combine(dataDir, "seen-sessions.json"));
+        var receive = new ReceiveViewModel(transports, trustStore, trustPrompt, sessionRegistry: sessionRegistry);
         var main = new MainViewModel(send, receive);
 
         var window = new MainWindow { DataContext = main };

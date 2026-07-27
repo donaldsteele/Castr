@@ -58,7 +58,9 @@ public partial class App : Avalonia.Application
                 trustStore,
                 new TcpStreamClient(),
                 SystemClock.Instance,
-                new SwarmPullSessionOptions(documentsDir, UnknownSenderPolicy.Prompt, IsInteractive: true),
+                new SwarmPullSessionOptions(
+                    documentsDir, UnknownSenderPolicy.Prompt, IsInteractive: true,
+                    SessionRegistry: new FileSessionRegistry(Path.Combine(dataDir, "seen-sessions.json"))),
                 sinkFactory: (destination, length) => new FileSystemFileSink(destination, length),
                 trustPrompt: trustPrompt));
 

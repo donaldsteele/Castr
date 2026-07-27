@@ -95,6 +95,15 @@ internal static class CastrPaths
 
     public static string DefaultIdentityPath => Path.Combine(ConfigDirectory, "identity.key");
 
+    /// <summary>
+    /// Where a receiver remembers which session ids it has already accepted, and what each one meant. Kept
+    /// beside the trust store rather than in memory because the CLI runs one transfer per invocation — a
+    /// process-lifetime registry would classify every session id as fresh and enforce nothing. See
+    /// <see cref="Castr.Core.Trust.ISessionRegistry"/>.
+    /// </summary>
+    public static string SessionRegistryPathFor(string trustStorePath) =>
+        Path.Combine(Path.GetDirectoryName(Path.GetFullPath(trustStorePath)) ?? ConfigDirectory, "seen-sessions.json");
+
     /// <summary>Conventional per-user seed location. A deployment drops trusted-senders.seed.json here to pre-authorize senders.</summary>
     public static string DefaultTrustSeedPath => Path.Combine(ConfigDirectory, "trusted-senders.seed.json");
 

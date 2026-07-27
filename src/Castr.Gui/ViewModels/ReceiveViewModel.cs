@@ -22,18 +22,21 @@ public sealed partial class ReceiveViewModel : ObservableObject
     private readonly ITransportFactory _transports;
     private readonly ITrustStore _trustStore;
     private readonly ITrustPrompt _trustPrompt;
+    private readonly ISessionRegistry? _sessionRegistry;
     private readonly ISystemClock _clock;
 
     private CancellationTokenSource? _cts;
     private IMulticastTransport? _transport;
 
     public ReceiveViewModel(
-        ITransportFactory transports, ITrustStore trustStore, ITrustPrompt trustPrompt, ISystemClock? clock = null)
+        ITransportFactory transports, ITrustStore trustStore, ITrustPrompt trustPrompt, ISystemClock? clock = null,
+        ISessionRegistry? sessionRegistry = null)
     {
         _transports = transports;
         _trustStore = trustStore;
         _trustPrompt = trustPrompt;
         _clock = clock ?? SystemClock.Instance;
+        _sessionRegistry = sessionRegistry;
     }
 
     /// <summary>The unknown-sender policies a user can pick, mapped to Core's <see cref="UnknownSenderPolicy"/>.</summary>
@@ -92,7 +95,8 @@ public sealed partial class ReceiveViewModel : ObservableObject
             _transport = _transports.CreateReceiverTransport();
 
             bool interactive = Policy == UnknownSenderPolicy.Prompt;
-            var options = new ReceiverSessionOptions(DestinationDirectory, Policy, IsInteractive: interactive);
+            var options = new ReceiverSessionOptions(
+                DestinationDirectory, Policy, IsInteractive: interactive, SessionRegistry: _sessionRegistry);
             var receiverId = RandomNumberGenerator.GetBytes(16);
 
             var session = new ReceiverSession(

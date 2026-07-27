@@ -18,7 +18,8 @@ public sealed record SwarmPullSessionOptions(
     string DestinationRoot,
     UnknownSenderPolicy UnknownSenderPolicy = UnknownSenderPolicy.Deny,
     bool IsInteractive = false,
-    long? ChunkCacheBytes = null);
+    long? ChunkCacheBytes = null,
+    ISessionRegistry? SessionRegistry = null);
 
 /// <summary>
 /// The mobile unicast-swarm client: pulls a transfer over point-to-point TCP instead of joining IP multicast.
@@ -189,10 +190,14 @@ public sealed class SwarmPullSession : IDisposable
 
         var admission = await ManifestAdmission.EvaluateAsync(
             manifestMessage.SignedManifest, _trustStore, _clock,
-            _options.UnknownSenderPolicy, _options.IsInteractive, _trustPrompt, ct).ConfigureAwait(false);
+            _options.UnknownSenderPolicy, _options.IsInteractive, _trustPrompt, ct,
+            _options.SessionRegistry).ConfigureAwait(false);
 
         if (admission.Outcome == ManifestAdmissionOutcome.SignatureInvalid)
             return false; // forged or corrupt — reject silently, exactly like ReceiverSession
+
+        if (admission.Outcome == ManifestAdmissionOutcome.SessionIdConflict)
+            return false; // this session id already means a different transfer — see ISessionRegistry
 
         if (admission.Outcome == ManifestAdmissionOutcome.Denied)
         {

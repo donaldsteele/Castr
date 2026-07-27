@@ -80,7 +80,9 @@ internal static class ReceiveRunner
 
         // Prompting only makes sense in interactive, non-TUI mode (the live dashboard owns the console).
         bool interactive = options.Policy == UnknownSenderPolicy.Prompt && !options.UseTui;
-        var sessionOptions = new ReceiverSessionOptions(destination, options.Policy, IsInteractive: interactive);
+        var sessionRegistry = new FileSessionRegistry(CastrPaths.SessionRegistryPathFor(options.TrustStorePath));
+        var sessionOptions = new ReceiverSessionOptions(
+            destination, options.Policy, IsInteractive: interactive, SessionRegistry: sessionRegistry);
         var receiverId = RandomNumberGenerator.GetBytes(16);
         var trustPrompt = interactive ? new ConsoleTrustPrompt(console) : null;
 

@@ -1,3 +1,4 @@
+using Castr.Core.Chunking;
 using Castr.Core.Manifest;
 using Castr.Core.Security;
 using Castr.Core.Time;
@@ -12,6 +13,13 @@ public enum ManifestAdmissionOutcome
 
     /// <summary>Signature valid but the sender is not trusted (and no interactive prompt accepted them).</summary>
     Denied,
+
+    /// <summary>
+    /// Signature valid, but this session id is already bound to a different transfer — see
+    /// <see cref="ISessionRegistry"/> for why that is refused rather than tolerated. Distinct from
+    /// <see cref="Denied"/>: nothing is wrong with the sender's trust status, so it raises no trust event.
+    /// </summary>
+    SessionIdConflict,
 
     /// <summary>Signature valid and the sender is trusted — proceed with the transfer.</summary>
     Accepted,
@@ -31,6 +39,12 @@ public sealed record ManifestAdmissionResult(ManifestAdmissionOutcome Outcome, T
 /// </summary>
 public static class ManifestAdmission
 {
+    /// <summary>
+    /// Runs the gate. <paramref name="sessionRegistry"/> is optional: when supplied, the manifest's session id
+    /// must not already be bound to a <i>different</i> transfer, and an accepted manifest binds it. When null no
+    /// session-id binding is enforced at all — every composition root supplies one, and the parameter is
+    /// nullable only so unit tests that are not about session identity need not construct a registry.
+    /// </summary>
     public static async Task<ManifestAdmissionResult> EvaluateAsync(
         SignedManifest signedManifest,
         ITrustStore trustStore,
@@ -38,21 +52,44 @@ public static class ManifestAdmission
         UnknownSenderPolicy unknownSenderPolicy,
         bool isInteractive,
         ITrustPrompt? trustPrompt,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ISessionRegistry? sessionRegistry = null)
     {
         if (!ManifestVerifier.VerifySignature(signedManifest))
             return new ManifestAdmissionResult(ManifestAdmissionOutcome.SignatureInvalid, null);
 
         var senderId = signedManifest.SenderId;
+
+        // Checked before trust is evaluated, so a conflicting id is refused without consulting — or teaching
+        // anything to — the sender presenting it. Recorded only on acceptance, so an untrusted sender cannot
+        // burn a session id a legitimate transfer is about to use.
+        var digest = ManifestDigest(signedManifest);
+        if (sessionRegistry?.Classify(signedManifest.Manifest.SessionId, senderId, digest) == SessionAdmission.Conflict)
+            return new ManifestAdmissionResult(ManifestAdmissionOutcome.SessionIdConflict, null);
+
         var decision = TrustDecisionEngine.Evaluate(senderId, trustStore, unknownSenderPolicy, isInteractive);
         if (decision.ShouldProceed)
+        {
+            sessionRegistry?.Record(signedManifest.Manifest.SessionId, senderId, digest, clock.UtcNow);
             return new ManifestAdmissionResult(ManifestAdmissionOutcome.Accepted, decision);
+        }
 
         if (await TryPromptForTrustAsync(decision, signedManifest, senderId, trustStore, clock, trustPrompt, cancellationToken).ConfigureAwait(false))
+        {
+            sessionRegistry?.Record(signedManifest.Manifest.SessionId, senderId, digest, clock.UtcNow);
             return new ManifestAdmissionResult(ManifestAdmissionOutcome.Accepted, decision);
+        }
 
         return new ManifestAdmissionResult(ManifestAdmissionOutcome.Denied, decision);
     }
+
+    /// <summary>
+    /// The identity of the transfer a session id is bound to: a digest over the canonical manifest encoding, the
+    /// same bytes the sender's Ed25519 signature covers. Using the signed encoding rather than a subset means
+    /// two manifests are "the same transfer" exactly when the signature says they are.
+    /// </summary>
+    public static ChunkHash ManifestDigest(SignedManifest signedManifest) =>
+        ChunkHash.Compute(ManifestCodec.Encode(signedManifest.Manifest));
 
     /// <summary>
     /// When trust evaluation asked for an interactive decision (<see cref="TrustOutcome.PromptRequired"/>) and

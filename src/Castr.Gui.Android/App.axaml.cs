@@ -55,7 +55,9 @@ public partial class App : Avalonia.Application
         IServiceDiscovery discovery = new NsdServiceDiscovery(global::Android.App.Application.Context);
         IStreamClient streamClient = new TcpStreamClient();
 
-        var options = new SwarmPullSessionOptions(destination, UnknownSenderPolicy.Prompt, IsInteractive: true);
+        ISessionRegistry sessionRegistry = new FileSessionRegistry(Path.Combine(dataDir, "seen-sessions.json"));
+        var options = new SwarmPullSessionOptions(
+            destination, UnknownSenderPolicy.Prompt, IsInteractive: true, SessionRegistry: sessionRegistry);
         Func<string, long, IFileSink> sinkFactory = (path, length) => new FileSystemFileSink(path, length);
 
         var vm = new SwarmReceiveViewModel(discovery, streamClient, trustStore, receiverId, options, sinkFactory);
