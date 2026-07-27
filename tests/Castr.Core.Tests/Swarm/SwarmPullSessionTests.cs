@@ -260,6 +260,90 @@ public class SwarmPullSessionTests
         Assert.False(pull.IsComplete); // chunk 1 (served as a swapped chunk 0) was rejected, never marked received
     }
 
+    [Fact]
+    public async Task PullFromRelayWithoutKey_HeldCiphertextStaysWithinBudget()
+    {
+        // The unbounded-cache case this budget exists for: a relaying receiver serves every chunk but cannot
+        // grant the content key, so nothing can be decrypted or written and every chunk's ciphertext is live at
+        // once. Before the bound, a puller held the whole transfer in memory on this path.
+        var original = RandomBytes(31, 20_000);           // exactly 20 chunks of 1000 => 1016 bytes ciphertext each
+        using var key = ManifestSigner.CreateSigningKey();
+        var transfer = BuildTransfer(key, "relay.bin", original, chunkSize: 1000);
+        var relay = await CompletedReceiverAsync(key, transfer);
+
+        const long budget = 3 * 1016;
+        var network = new InMemoryStreamNetwork();
+        await using var relayServe = StartServe(network, PeerEndpoint, relay.CreateSwarmContentSource());
+
+        var (_, sinkFactory) = MemorySinkFactory();
+        using var pull = NewPull(network, TrustedStoreFor(key), sinkFactory, chunkCacheBytes: budget);
+
+        using var cts = new CancellationTokenSource(Timeout);
+        await pull.PullFromAsync(PeerEndpoint, cts.Token);
+
+        Assert.NotNull(pull.Manifest);
+        Assert.False(pull.IsComplete);                    // no key from a relay, so nothing is written
+        Assert.InRange(pull.HeldChunkCount, 1, 3);
+        Assert.InRange(pull.HeldCiphertextBytes, 1, budget);
+    }
+
+    [Fact]
+    public async Task CiphertextEvictedUnderBudget_IsRePulled_NotStranded()
+    {
+        // Dropping an undecrypted chunk destroys the only copy of its ciphertext, so eviction has to clear the
+        // bitmap bit with it. If it did not, the chunk would read as "have" with nothing behind it, would never
+        // be re-requested, and the file would finish short — silently.
+        var original = RandomBytes(32, 20_000);
+        using var key = ManifestSigner.CreateSigningKey();
+        var transfer = BuildTransfer(key, "evicted.bin", original, chunkSize: 1000);
+        var relay = await CompletedReceiverAsync(key, transfer);
+
+        var network = new InMemoryStreamNetwork();
+        await using var relayServe = StartServe(network, PeerEndpoint, relay.CreateSwarmContentSource());
+        await using var senderServe = StartServe(network, SenderEndpoint, transfer.Sender.CreateSwarmContentSource());
+
+        var (sink, sinkFactory) = MemorySinkFactory();
+        using var pull = NewPull(network, TrustedStoreFor(key), sinkFactory, chunkCacheBytes: 3 * 1016);
+        var progress = new ProgressRecorder(pull);
+
+        using var cts = new CancellationTokenSource(Timeout);
+
+        // Step 1: take everything the relay has. Most of it is evicted back to missing for want of the key.
+        await pull.PullFromAsync(PeerEndpoint, cts.Token);
+        Assert.False(pull.IsComplete);
+        Assert.True(progress.Latest.CompletedChunks < progress.Latest.TotalChunks); // the evicted chunks went back
+
+        // Step 2: the sender grants the key and re-serves whatever was walked back.
+        await pull.PullFromAsync(SenderEndpoint, cts.Token);
+
+        Assert.True(pull.IsComplete);
+        Assert.Equal(original, sink().ToArray());
+        Assert.Equal(0, pull.HeldChunkCount); // every chunk released once its plaintext reached the sink
+    }
+
+    [Fact]
+    public async Task BudgetSmallerThanOneChunk_StillCompletes()
+    {
+        // Degenerate budget: eviction always keeps one chunk resident, so a budget below a single chunk degrades
+        // to hold-one-at-a-time instead of livelocking on drop-everything-then-re-request-forever.
+        var original = RandomBytes(33, 9000);
+        using var key = ManifestSigner.CreateSigningKey();
+        var transfer = BuildTransfer(key, "tiny-budget.bin", original, chunkSize: 1000);
+
+        var network = new InMemoryStreamNetwork();
+        await using var serve = StartServe(network, SenderEndpoint, transfer.Sender.CreateSwarmContentSource());
+
+        var (sink, sinkFactory) = MemorySinkFactory();
+        using var pull = NewPull(network, TrustedStoreFor(key), sinkFactory, chunkCacheBytes: 1);
+
+        using var cts = new CancellationTokenSource(Timeout);
+        await pull.PullFromAsync(SenderEndpoint, cts.Token);
+
+        Assert.True(pull.IsComplete);
+        Assert.Equal(original, sink().ToArray());
+        Assert.Equal(0, pull.HeldChunkCount);
+    }
+
     // ---- harness ----
 
     private sealed record Transfer(
@@ -351,9 +435,10 @@ public class SwarmPullSessionTests
         public TransferProgress Latest => _latest ?? throw new InvalidOperationException("No progress emitted yet.");
     }
 
-    private static SwarmPullSession NewPull(InMemoryStreamNetwork network, ITrustStore store, Func<string, long, IFileSink> sinkFactory) =>
+    private static SwarmPullSession NewPull(
+        InMemoryStreamNetwork network, ITrustStore store, Func<string, long, IFileSink> sinkFactory, long? chunkCacheBytes = null) =>
         new(ReceiverId(1), store, network.CreateClient(PeerEndpoint), new FakeClock(DateTimeOffset.UtcNow),
-            new SwarmPullSessionOptions("/root"), sinkFactory);
+            new SwarmPullSessionOptions("/root", ChunkCacheBytes: chunkCacheBytes), sinkFactory);
 
     private static ITrustStore TrustedStoreFor(NSec.Cryptography.Key key)
     {

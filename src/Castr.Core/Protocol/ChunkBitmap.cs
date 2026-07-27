@@ -43,6 +43,18 @@ public sealed class ChunkBitmap
         _bits[index / 8] |= (byte)(1 << (index % 8));
     }
 
+    /// <summary>
+    /// Un-marks a chunk. Used only to walk back a chunk this receiver verified but can no longer produce — see
+    /// <c>SwarmPullSession.EvictDownToBudget</c>, where dropping still-undecrypted ciphertext under memory
+    /// pressure has to be paired with clearing the bit, or the chunk is "have" with nothing behind it and is
+    /// never re-requested.
+    /// </summary>
+    public void Clear(int index)
+    {
+        CheckIndex(index);
+        _bits[index / 8] &= (byte)~(1 << (index % 8));
+    }
+
     public int CountSet()
     {
         int count = 0;
