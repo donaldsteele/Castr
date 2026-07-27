@@ -4,7 +4,7 @@ title: "Proposal: section-based repair gating (replace the carousel-idle heurist
 tags: [protocol, decision, proposal]
 sources: [castr-project-plan]
 created: 2026-07-25
-updated: 2026-07-25
+updated: 2026-07-27
 ---
 
 # Proposal: section-based repair gating
@@ -31,15 +31,25 @@ This must be stated up front, because the intuition that motivates the idea — 
 go faster" — is no longer accurate. **The storm is already fixed.** See [[m7-repair-amplification]]
 and `docs/benchmarks/throughput-runs.md`:
 
-| Metric | Pre-M7 | Post-M7 | Post-M8 |
-|---|---|---|---|
-| Duplicate chunk datagrams (100 MB) | 120,060 | **324** | — |
-| Wire amplification | 2.39× | 1.13× | **1.05×** |
+| Metric | Pre-M7 | Post-M7 | Post-M8 | Post-M9/M11 (M12a) |
+|---|---|---|---|---|
+| Duplicate chunk datagrams (100 MB) | 120,060 | **324** | — | **0** |
+| Wire amplification | 2.39× | 1.13× | 1.05× | **1.029×** |
 
-At 1.05× the theoretical floor is 1.00×, so **there is ~5% of wire traffic left to remove in total**,
-and this proposal could not capture all of it. Meanwhile the measured bottleneck is not wire volume at
-all: both sides are bound by per-datagram cost (~32 µs each way), and `SendToAsync` alone is 66% of
-sender CPU.
+At 1.029× the theoretical floor is 1.00×, so **there is under 3% of wire traffic left to remove in
+total**, and this proposal could not capture all of it. Meanwhile the measured bottleneck is not wire
+volume at all: both sides are bound by per-datagram cost, and `SendToAsync` alone is 66% of sender CPU.
+
+**M12a strengthened this section rather than changing it, and killed the one number that pointed the
+other way.** See [[m12a-fanout-baseline]]. Measured at 1, 2, 3 and 5 receivers, on loopback and on the
+real wire: `CHUNK_PACKET` is **73,600 in every arm** — 400 chunks × 184 datagrams, no chunk sent twice —
+`CHUNK_REQUEST` and `CHUNK_RESPONSE` are **zero**, and amplification is **1.029× flat against receiver
+count**. The **5.08× fan-out amplification figure that this workstream was partly scoped against is
+withdrawn**: it was loopback, pre-M9/M10, and from the withdrawn 60,000-byte-datagram configuration.
+
+The practical consequence for anyone implementing this: **on a lossless segment at N ≤ 5 the repair path
+never engages at all**, so a benchmark there cannot show this change doing anything, in either direction.
+Validate it under real loss (the Docker `netem` E2E tier) or not at all.
 
 Worse for the throughput case: the M7 campaign measured deferring repair *in isolation* at **−11%**,
 because the redundant repair stream was inadvertently supplying the sender's only send-path
@@ -155,11 +165,18 @@ Sections keep repair bounded and overlapping-but-not-colliding, which is the pro
   it? Keeping two mechanisms indefinitely is its own maintenance cost.
 - **Does this help or hurt the mobile swarm-pull tier?** That path has no carousel at all, so sections
   may be meaningless there — check before assuming symmetry.
+- **What is the acceptance evidence, now that the lossless case shows nothing?** M12a measured zero
+  repair traffic at N ≤ 5 on a lossless segment, so the only place this change is observable is under
+  loss or at receiver counts one host cannot produce. The Docker `netem` tier is the available vehicle;
+  decide up front what it must show, because "no regression on a clean LAN" is not evidence of anything
+  here.
 
 ## Prerequisites
 
-- **M8 must merge first.** This touches the same repair path and would make M8's measurements
-  unattributable.
+- **M8 must merge first.** ✅ Merged (`50e4cf4`).
+- **M12a must land first**, so the design is argued against numbers that describe shipped code. ✅ Done
+  2026-07-27 — and it removed one of the two figures this work was scoped against. See
+  [[m12a-fanout-baseline]].
 - Should be specified and reviewed *before* implementation. The two prior defects here were design
   errors that survived code review precisely because the design was never written down separately from
   the code.
@@ -171,3 +188,4 @@ Sections keep repair bounded and overlapping-but-not-colliding, which is the pro
 - [[wire-protocol]]
 - [[m7-repair-amplification]]
 - [[m6-throughput-pipelining]]
+- [[m12a-fanout-baseline]]

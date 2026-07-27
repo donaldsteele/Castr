@@ -132,11 +132,13 @@ backward-safe (unknown tags throw and both sessions swallow); appending a field 
 not. Write and review the design before implementing — both prior defects here were design errors that
 survived code review. Expect 3–5 review rounds; this is the most defect-dense area in the system.
 
-**M12a changed this stage's premise and the proposal has to be rewritten before it is implemented.** It
-cannot be justified by amplification any more: measured amplification is 1.029× and does not move with
-receiver count, and repair traffic is zero at N ≤ 5 on a lossless segment. The remaining case is the one
-the architecture review already made — deleting the "never reached vs. finished" bug class — plus
-behaviour under real loss and at receiver counts an order of magnitude beyond one host. Lead with that.
+**M12a reconciled the proposal page against real numbers (`0a5463c`, then this commit).** The page already
+argued correctness rather than throughput, and M12a strengthened that: measured amplification is 1.029×
+and does not move with receiver count, zero chunks are sent twice, and repair traffic is zero at N ≤ 5 on
+a lossless segment. The 5.08× fan-out row this stage was partly scoped against is withdrawn. **The open
+design question is now what acceptance evidence is even possible** — on a clean LAN at these receiver
+counts the repair path never engages, so the change is observable only under real loss (the Docker `netem`
+tier) or at receiver counts one host cannot produce. Decide that before writing code.
 
 ### M13 — Release automation
 
