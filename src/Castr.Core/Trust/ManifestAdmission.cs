@@ -15,6 +15,12 @@ public enum ManifestAdmissionOutcome
     Denied,
 
     /// <summary>
+    /// Signature valid, but the manifest is not structurally well-formed — see <see cref="ManifestLimits"/>.
+    /// Distinct from <see cref="SignatureInvalid"/>: the sender really did sign this, which is the point.
+    /// </summary>
+    Malformed,
+
+    /// <summary>
     /// Signature valid, but this session id is already bound to a different transfer — see
     /// <see cref="ISessionRegistry"/> for why that is refused rather than tolerated. Distinct from
     /// <see cref="Denied"/>: nothing is wrong with the sender's trust status, so it raises no trust event.
@@ -57,6 +63,12 @@ public static class ManifestAdmission
     {
         if (!ManifestVerifier.VerifySignature(signedManifest))
             return new ManifestAdmissionResult(ManifestAdmissionOutcome.SignatureInvalid, null);
+
+        // Structural bounds before anything acts on the manifest's numbers. Being signed makes a manifest
+        // authentic, not well-formed, and the receive loop does not wrap manifest handling — so an out-of-range
+        // ChunkSize used to reach ChunkPacketAssembler and throw out of the loop. See ManifestLimits.
+        if (!ManifestLimits.IsWellFormed(signedManifest.Manifest))
+            return new ManifestAdmissionResult(ManifestAdmissionOutcome.Malformed, null);
 
         var senderId = signedManifest.SenderId;
 

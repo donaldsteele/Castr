@@ -77,7 +77,7 @@ internal static class CastrPaths
     /// Castr.Core.Protocol.ChunkPacketAssembler's worst-case reassembly buffer, so raising it is a memory
     /// decision, not just a validation one.</para>
     /// </summary>
-    public const int MaxChunkSize = 16 * 1024 * 1024;
+    public const int MaxChunkSize = Castr.Core.Manifest.ManifestLimits.MaxChunkSize;
 
     /// <summary>Per-user config directory, e.g. %APPDATA%/castr on Windows, ~/.config/castr elsewhere.</summary>
     public static string ConfigDirectory

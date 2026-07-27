@@ -690,6 +690,9 @@ public sealed class ReceiverSession
         if (admission.Outcome == ManifestAdmissionOutcome.SignatureInvalid)
             return; // invalid signature — forged or corrupt, reject outright (no trust event, unchanged behavior)
 
+        if (admission.Outcome == ManifestAdmissionOutcome.Malformed)
+            return; // signed, but its own numbers do not agree — see ManifestLimits
+
         if (admission.Outcome == ManifestAdmissionOutcome.SessionIdConflict)
             return; // this session id already means a different transfer — drop, exactly like a bad signature
 
@@ -712,23 +715,19 @@ public sealed class ReceiverSession
         }
 
         // Now that the trusted manifest tells us the largest legitimate chunk for this transfer, bound the chunk
-        // reassembler to that chunk size (+ AEAD tag) so a crafted ChunkPacket can never claim more ciphertext —
-        // or more packets — than a real chunk of this transfer would. This is manifest-derived, so it tracks the
-        // default chunk size automatically and needed no change when that default went 8 KiB -> 256 KiB (M8).
+        // reassembler to that chunk size (+ AEAD tag) so a crafted ChunkPacket can never claim more ciphertext
+        // than a real chunk of this transfer would. This is manifest-derived, so it tracks the default chunk size
+        // automatically and needed no change when that default went 8 KiB -> 256 KiB (M8).
         //
-        // KNOWN GAP found while re-validating that at M8, pre-existing and NOT introduced by the chunk-size
-        // change: ManifestFileEntry.ChunkSize is never range-checked, here or in ManifestCodec.Decode. It is
-        // covered by the sender's Ed25519 signature, so reaching this requires a *trusted* sender, which is why
-        // this is a robustness gap rather than a remote-attacker hole. But a trusted sender that is buggy or
-        // compromised gets two things: a ChunkSize near int.MaxValue makes CiphertextBoundForChunkSize overflow
-        // to a negative bound and the ChunkPacketAssembler constructor throw ArgumentOutOfRangeException straight
-        // out of the receive loop (HandlePacketAsync is not wrapped — only MessageCodec.Decode is), and any large
-        // -but-not-overflowing value re-opens the very allocation ceiling this line exists to close. The fix is a
-        // range check at manifest admission, which is a change to what manifests are *accepted* and so wants its
-        // own review rather than riding along with a default-value change. Tracked in wiki/synthesis/roadmap.md.
+        // The gap recorded here since M8 — ManifestFileEntry.ChunkSize was never range-checked, so a trusted but
+        // buggy or compromised sender could make CiphertextBoundForChunkSize overflow to a negative bound and
+        // throw ArgumentOutOfRangeException straight out of the receive loop (manifest handling is not wrapped;
+        // only MessageCodec.Decode is), or re-open the allocation ceiling with a large-but-not-overflowing value
+        // — is closed in M11 by ManifestLimits, applied at admission above. maxChunkSize is therefore known to
+        // be in [1, ManifestLimits.MaxChunkSize] by the time it gets here.
         //
         // minFragmentBytes comes from THIS session's datagram budget rather than the shipped default, so a
-        // session running on a non-default budget gets a packet-count bound derived from its own arithmetic.
+        // session running on a non-default budget gets a coverage bound derived from its own arithmetic.
         _chunkAssembler = new ChunkPacketAssembler(
             ChunkPacketAssembler.CiphertextBoundForChunkSize(maxChunkSize),
             minFragmentBytes: ChunkPacketAssembler.MinFragmentBytesFor(_maxDatagramPayloadBytes));

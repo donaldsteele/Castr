@@ -196,6 +196,9 @@ public sealed class SwarmPullSession : IDisposable
         if (admission.Outcome == ManifestAdmissionOutcome.SignatureInvalid)
             return false; // forged or corrupt — reject silently, exactly like ReceiverSession
 
+        if (admission.Outcome == ManifestAdmissionOutcome.Malformed)
+            return false; // signed, but its own numbers do not agree — see ManifestLimits
+
         if (admission.Outcome == ManifestAdmissionOutcome.SessionIdConflict)
             return false; // this session id already means a different transfer — see ISessionRegistry
 
